@@ -71,39 +71,72 @@ Get an API key at [platform.openai.com](https://platform.openai.com) → `OPENAI
 
 ## Personas
 
-Each persona is a single file in `prompts/` that exports the character. To add a new one, copy `prompts/tyler.js` and edit:
+A persona is a single character the bot plays on a call — a name, a voice, and a system prompt that defines how they talk, what fake info they'll leak, and how they stall. Each persona is one file in `prompts/`; the server auto-loads every file in that directory at startup, so adding a new one is a one-file operation.
+
+### Shipped personas
+
+| id | character | when to use |
+|---|---|---|
+| `tyler` *(default)* | 26-year-old marketing guy in SF, distractible, too polite to hang up | Pretexts aimed at working-age adults: Amazon fraud, IRS, document/package scams, Indian-consulate |
+| `margaret` | 78-year-old retired schoolteacher in Columbus OH, lonely, bad with phones | Classic "elder scam" pretexts: tech support, Medicare, sweepstakes, romance |
+
+Switch the default with `DEFAULT_PERSONA=margaret` in `.env`, or pick per-call (see below).
+
+### How each persona is structured
+
+Every persona module exports the same shape:
 
 ```js
-// prompts/sandra.js
+// prompts/tyler.js
 module.exports = {
-  id: 'sandra',                            // URL-safe key
-  name: 'Sandra Alvarez',
-  description: 'Confused new retiree in Miami who just inherited her mother\'s iPad.',
-  voiceId: 'your_elevenlabs_voice_id',     // or null to use the agent's default
-  systemPrompt: `You are Sandra...`,
-  outboundPrompt: `You just answered...` + systemPrompt,
+  id: 'tyler',                              // URL-safe key used everywhere
+  name: 'Tyler Bennett',                    // display name
+  description: 'Distractible millennial.',  // one-liner for dashboards / logs
+  voiceId: 'loWZgmt1ZsitHiWYOGDJ',          // ElevenLabs voice id, or null
+  systemPrompt: `...`,                      // inbound prompt (they call us)
+  outboundPrompt: `...` + systemPrompt,     // outbound prompt (we call them) — usually adds an opener
 };
 ```
 
-That's it — the server picks it up on next start. List available personas:
+`voiceId` should point at a voice you've added to your ElevenLabs voice library. Match the voice to the character — a twentysomething voice for Tyler, a grandma voice for Margaret. If `voiceId` is `null`, the agent uses whatever voice is configured in the ElevenLabs dashboard.
 
-```bash
-curl http://localhost:8000/api/call/personas
-```
+### Adding a new persona
 
-Select a persona per call:
-- **Outbound**: `POST /api/call` body `{ "phoneNumber": "+1...", "persona": "sandra" }`
-- **Inbound**: set the SignalWire webhook URL to `…/inbound?persona=sandra`
-- **SMS**: set the SignalWire SMS webhook URL to `…/sms?persona=sandra`
-- **Default**: set `DEFAULT_PERSONA=sandra` in `.env`
+1. Copy an existing file: `cp prompts/tyler.js prompts/sandra.js`.
+2. Rewrite the prompt for your character — use the structure below.
+3. (Optional) Add a voice: find a voice on [voices.elevenlabs.io](https://voices.elevenlabs.io), add it to your library, paste the voice id into `voiceId`.
+4. Restart the server. Verify with `curl http://localhost:8000/api/call/personas`.
+
+That's the whole workflow. No registration, no routes, no config.
+
+### What a good persona prompt contains
+
+Structure the prompt in clearly-labeled sections — LLMs follow section headers well. The Tyler prompt is the canonical example. At minimum include:
+
+- **Identity & backstory**: name, age, location, job, family, daily-life detail. Enough texture that the agent has answers when the scammer asks small-talk questions ("where do you work?", "who else lives with you?").
+- **Anti-AI reflex**: an explicit rule for what to say when someone asks "are you a bot?" / "is this a recording?" Never admit. Have a reflexive normal-person response ready.
+- **Forbidden phrases**: list the customer-service tics you want the model to avoid ("how can I help you", "happy to help", "is there anything else"). Without this, assistant-shaped training leaks through.
+- **Pushback before compliance**: scammers need friction. First time they ask for ANY info, make the persona push back with a skeptical question ("how did you get my number?", "can I call you back at the official line?"). Only fumble the fake info out on the second or third ask.
+- **Fake identity set**: hard-coded fake name, DOB, address, email, etc. that the persona is allowed to leak. Give concrete values so the model doesn't make up something different each call.
+- **Stall library**: believable distractions ("my roommate just walked in", "my cat jumped on the keyboard", "someone's at the door"). These are your primary time-wasting mechanic.
+- **Format constraints**: 1-2 sentence turns, natural filler ("uh", "hold on"), disfluencies. Monologues sound robotic and get cut off by the TTS.
+- **Never go silent rule**: LLMs sometimes emit empty responses when uncertain. Explicitly require an audible filler every turn — even "uh, hold on a sec" beats dead air.
+- **End-call rule**: when, if ever, is the persona allowed to hang up? Usually: abusive callers only.
 
 ### Persona-writing tips (from what actually works)
 
-- **Confusion, not refusal.** Scammers bail if you stonewall. Fumble, mishear, drop the phone.
-- **Drip personal info** — never hand over a clean, correct answer. Start, restart, get a digit wrong.
-- **Cover the "are you a bot?" question.** Every prompt must have a reflexive human response to that. Never admit.
-- **1-2 sentence turns.** Monologues get cut off and sound robotic.
-- **Disfluencies:** "uh", "hold on", self-corrections, natural pauses.
+- **Confusion, not refusal.** Scammers bail if you stonewall. Fumble, mishear, apologize, drop the phone — don't argue.
+- **Drip info, never dump.** A good persona burns 30-60 seconds per piece of info, not 5. Restarts, digit-swaps, "wait, sorry, let me start over" — every fumble is wasted scammer time.
+- **Pick a voice that matches.** Prompt can say Tyler is 26 all day — if the voice sounds 55, scammers get suspicious.
+- **Pressure-test with the included adversarial grader.** The simulation harness (kept private) pits the baiter against a scripted scammer and GPT-4o-scores the transcript on character consistency, PII leakage, and engagement. Iterate the prompt until the numbers go up.
+
+### Selecting a persona per call
+
+- **Outbound**: `POST /api/call` body `{ "phoneNumber": "+1...", "persona": "margaret" }`
+- **Inbound**: set the SignalWire voice webhook to `…/inbound?persona=margaret`
+- **SMS**: set the SignalWire SMS webhook to `…/sms?persona=margaret`
+- **Default** for any call without an explicit persona: `DEFAULT_PERSONA=margaret` in `.env`
+- **List** all available: `GET /api/call/personas`
 
 ## Batch dialing
 
