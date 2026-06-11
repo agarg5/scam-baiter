@@ -5,10 +5,13 @@ An open-source voice bot that wastes scammers' time. Pick up a spam call, let th
 Built on **SignalWire** (Twilio-compatible telephony) + **ElevenLabs Conversational AI** (voice agent) + **OpenAI GPT-4o** (SMS replies).
 
 - 📞 Inbound and outbound calls
-- 💬 SMS replies
-- 🎭 Pluggable personas — drop a `.js` file into `prompts/` and it's live
+- 💬 SMS replies (history persisted to disk, survives restarts)
+- 🎭 Pluggable personas — drop a `.js` file into `prompts/` and it's live, prompt + voice applied per call
 - 📋 Batch dialer — feed it a list of numbers
 - 📝 Full transcripts saved per call
+- 📊 Dashboard — total time wasted, per-persona stats, browsable transcripts
+- 🔬 Offline simulator + grader — pressure-test a persona without live calls
+- 🔒 Auth on every exposed endpoint (API key, webhook signatures, WS token)
 
 ## Architecture
 
@@ -59,15 +62,32 @@ Call your SignalWire number and the default persona (Tyler) will answer.
 ### 2. ElevenLabs Conversational AI
 1. Go to [elevenlabs.io/app/conversational-ai](https://elevenlabs.io/app/conversational-ai) and create an agent.
 2. **LLM**: GPT-4o (or Claude — both work).
-3. **Voice**: pick one that matches your persona. For Tyler, use a natural young-adult male voice; for Margaret, a warm elderly female voice.
+3. **Voice**: pick any default — the per-call persona overrides it (see below). The dashboard voice is just the fallback.
 4. **First message**: leave empty — the persona prompt handles the opener.
-5. **System prompt**: paste the persona's system prompt (e.g. contents of `prompts/tyler.js`'s `SYSTEM_PROMPT`). Enable **Override personality** so the stock agent persona doesn't leak through.
-6. **Audio**: set both input and output to `ulaw_8000` — SignalWire media streams are μ-law 8kHz.
-7. Copy the **Agent ID** → `ELEVENLABS_AGENT_ID`.
-8. Create an API key (Profile → API Keys) → `ELEVENLABS_API_KEY`.
+5. **System prompt**: paste any persona's system prompt as a sensible default. The server sends the *selected* persona's prompt and voice as a per-call override at connection time, so this is only the fallback used if overrides are disabled.
+6. **Enable overrides** (important): in the agent's **Security** settings, allow overriding the **system prompt**, **first message**, and **voice**. Without this, ElevenLabs ignores the per-call persona and every call uses the dashboard prompt/voice — i.e. persona selection silently does nothing on voice.
+7. **Audio**: set both input and output to `ulaw_8000` — SignalWire media streams are μ-law 8kHz.
+8. Copy the **Agent ID** → `ELEVENLABS_AGENT_ID`.
+9. Create an API key (Profile → API Keys) → `ELEVENLABS_API_KEY`.
 
 ### 3. OpenAI
-Get an API key at [platform.openai.com](https://platform.openai.com) → `OPENAI_API_KEY`. Used for SMS replies.
+Get an API key at [platform.openai.com](https://platform.openai.com) → `OPENAI_API_KEY`. Used for SMS replies and the offline simulator.
+
+### 4. Security (recommended before exposing a tunnel)
+
+This server is built to sit on a public URL, so every exposed surface can be locked down with an environment variable. Each guard is **secure when configured, loud when not**: set the secret and it's enforced; leave it unset and the server boots but prints a warning that the surface is open. Set these in `.env`:
+
+| Var | Protects | If unset |
+|---|---|---|
+| `API_SECRET` | `POST /api/call` (placing calls) — sent as `X-Api-Key` or `Bearer`; the batch dialer sends it automatically | endpoint is open |
+| `SIGNALWIRE_API_TOKEN` | `/inbound`, `/sms`, `/outbound-twiml`, `/call-status` — validates SignalWire's `X-Twilio-Signature` | webhooks unvalidated |
+| `WS_TOKEN` | `wss://…/media-stream` — token baked into the LaML stream URL and checked on connect | any socket accepted |
+| `DASHBOARD_KEY` | `/dashboard` (`?key=…`); falls back to `API_SECRET` | dashboard is open |
+
+Notes:
+- Signature validation reconstructs the signed URL from `PUBLIC_HOST` (preferred behind a tunnel) or the `Host` header — set `PUBLIC_HOST` so checks pass behind a proxy.
+- For local testing without a real provider, set `SKIP_SIGNATURE_VALIDATION=true` so you can `curl` the webhooks yourself.
+- Generate secrets with `openssl rand -hex 32`.
 
 ## Personas
 
@@ -128,7 +148,7 @@ Structure the prompt in clearly-labeled sections — LLMs follow section headers
 - **Confusion, not refusal.** Scammers bail if you stonewall. Fumble, mishear, apologize, drop the phone — don't argue.
 - **Drip info, never dump.** A good persona burns 30-60 seconds per piece of info, not 5. Restarts, digit-swaps, "wait, sorry, let me start over" — every fumble is wasted scammer time.
 - **Pick a voice that matches.** Prompt can say Tyler is 26 all day — if the voice sounds 55, scammers get suspicious.
-- **Pressure-test with the included adversarial grader.** The simulation harness (kept private) pits the baiter against a scripted scammer and GPT-4o-scores the transcript on character consistency, PII leakage, and engagement. Iterate the prompt until the numbers go up.
+- **Pressure-test with the included simulator.** `npm run sim` pits the persona against a GPT-4o scammer and grades the transcript on character consistency, PII safety, and engagement — no live call needed. Iterate the prompt until the numbers go up. See [Simulator](#simulator) below.
 
 ### Selecting a persona per call
 
@@ -158,17 +178,18 @@ Flags:
 
 ## API reference
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/inbound` | SignalWire voice webhook (returns LaML) |
-| `POST` | `/sms` | SignalWire SMS webhook |
-| `POST` | `/api/call` | Place an outbound call: `{ phoneNumber, persona? }` |
-| `GET`  | `/api/call/personas` | List available personas |
-| `POST` | `/outbound-twiml` | Internal — fetched by SignalWire after call connects |
-| `POST` | `/call-status` | Internal — call status callbacks |
-| `GET`  | `/` | Health check |
+| Method | Path | Purpose | Auth |
+|---|---|---|---|
+| `POST` | `/inbound` | SignalWire voice webhook (returns LaML) | signature |
+| `POST` | `/sms` | SignalWire SMS webhook | signature |
+| `POST` | `/api/call` | Place an outbound call: `{ phoneNumber, persona? }` | `API_SECRET` |
+| `GET`  | `/api/call/personas` | List available personas | none |
+| `GET`  | `/dashboard` | Stats + transcript viewer (HTML) | `DASHBOARD_KEY` (`?key=`) |
+| `POST` | `/outbound-twiml` | Internal — fetched by SignalWire after call connects | signature |
+| `POST` | `/call-status` | Internal — call status callbacks | signature |
+| `GET`  | `/` | Health check | none |
 
-WebSocket: `wss://HOST/media-stream?direction=inbound|outbound&persona=<id>`
+WebSocket: `wss://HOST/media-stream?direction=inbound|outbound&persona=<id>&token=<WS_TOKEN>`
 
 ## Conversation logs
 
@@ -190,6 +211,43 @@ Every call is saved to `logs/conversations/` as JSON:
 }
 ```
 
+SMS threads are persisted separately to `logs/sms/<number>.json` so a conversation survives a server restart.
+
+## Dashboard
+
+A read-only web view of everything in `logs/conversations/`: total time wasted, a per-persona breakdown, and every transcript (expandable, HTML-escaped). Visit:
+
+```
+https://YOUR-HOST/dashboard?key=YOUR_DASHBOARD_KEY
+```
+
+The key is `DASHBOARD_KEY` (or `API_SECRET` if that's unset). No build step — it's server-rendered HTML.
+
+## Simulator
+
+Pressure-test a persona offline, without spending a phone call. A GPT-4o "scammer" runs a chosen pretext against the persona's prompt, then a grader scores the transcript:
+
+```bash
+npm run sim -- --persona tyler --pretext amazon --turns 12
+```
+
+- `--persona` — which persona to test (default: `DEFAULT_PERSONA`)
+- `--pretext` — `amazon`, `irs`, `techsupport`, `sweepstakes`, or any free-text brief
+- `--turns` — exchanges to simulate (default 12)
+- `--model` — OpenAI model (default `gpt-4o`)
+
+It prints the running transcript and a JSON score (character consistency, PII safety, engagement, plus a one-line fix suggestion), and saves the full run to `logs/sims/`. Needs `OPENAI_API_KEY`.
+
+> Note: the simulator tests the *prompt* via OpenAI in text. It's a fast proxy for prompt quality, not a full voice-path test — TTS phrasing, latency, and barge-in still need a real or recorded call.
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs the `node:test` suite under `test/` — persona loading, batch-list parsing, the persisted SMS store, and the auth guards. No network or credentials required.
+
 ## Deployment
 
 Needs WebSocket support. Known-good:
@@ -210,8 +268,8 @@ Remember to update the SignalWire voice/SMS webhooks to the deployed host.
 PRs welcome, especially:
 - new personas (add to `prompts/`)
 - new channels (WhatsApp? Telegram?)
-- a web dashboard for browsing logs
 - agent tools (hang-up, transfer-to-human, text-a-human)
+- richer dashboard (filtering, search, audio playback)
 
 Open an issue before large changes so we can talk through scope.
 

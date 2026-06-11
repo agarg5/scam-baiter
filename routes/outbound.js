@@ -3,6 +3,7 @@ const router = express.Router();
 const twilio = require('twilio');
 const { client } = require('../services/client');
 const { getPersona, listPersonas } = require('../prompts/personas');
+const { requireApiKey, streamToken } = require('../services/security');
 
 /**
  * GET /api/call/personas
@@ -19,7 +20,7 @@ router.get('/personas', (req, res) => {
  * Initiates a SignalWire outbound call to the given number, then connects it
  * to ElevenLabs via the same media-stream WebSocket bridge.
  */
-router.post('/', async (req, res) => {
+router.post('/', requireApiKey, async (req, res) => {
   const { phoneNumber, persona } = req.body;
 
   if (!phoneNumber) {
@@ -57,9 +58,12 @@ router.post('/twiml', (req, res) => {
   const persona = req.query.persona || 'tyler';
   const twiml = new twilio.twiml.VoiceResponse();
 
+  const token = streamToken();
+  const tokenQs = token ? `&token=${encodeURIComponent(token)}` : '';
+
   const connect = twiml.connect();
   const stream = connect.stream({
-    url: `wss://${host}/media-stream?direction=outbound&persona=${encodeURIComponent(persona)}`,
+    url: `wss://${host}/media-stream?direction=outbound&persona=${encodeURIComponent(persona)}${tokenQs}`,
     name: 'scam-baiter-outbound-stream',
   });
   stream.parameter({ name: 'persona', value: persona });

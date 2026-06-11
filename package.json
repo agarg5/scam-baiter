@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "batch": "node scripts/batch-call.js"
+    "batch": "node scripts/batch-call.js",
+    "sim": "node scripts/sim.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@signalwire/compatibility-api": "^3.0.0",

@@ -13,6 +13,8 @@ const ELEVENLABS_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
  * @param {string} opts.callSid - Twilio call SID
  * @param {string} opts.streamSid - Twilio stream SID
  * @param {string} opts.agentId - ElevenLabs agent ID (defaults to env var)
+ * @param {object} opts.persona - Persona module ({ systemPrompt, outboundPrompt, voiceId })
+ * @param {string} opts.direction - 'inbound' or 'outbound' (selects which prompt to use)
  * @param {function} opts.onTranscript - Called with { speaker, text } on transcript events
  * @param {function} opts.onEnd - Called when the conversation ends
  */
@@ -20,6 +22,8 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
   const {
     callSid,
     agentId = ELEVENLABS_AGENT_ID,
+    persona,
+    direction = 'inbound',
     onTranscript,
     onEnd,
   } = opts;
@@ -44,6 +48,33 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
 
   elWs.on('open', () => {
     console.log(`[ElevenLabs] Connected for call ${callSid}`);
+
+    // Send the persona's prompt and voice as a config override so the agent
+    // plays the persona we selected for THIS call, rather than whatever static
+    // prompt/voice is configured in the ElevenLabs dashboard. For overrides to
+    // take effect, the agent's Security settings must allow overriding the
+    // system prompt, first message, and voice (see README).
+    const overrides = {};
+    if (persona) {
+      const prompt = direction === 'outbound'
+        ? (persona.outboundPrompt || persona.systemPrompt)
+        : persona.systemPrompt;
+
+      if (prompt) {
+        overrides.agent = { prompt: { prompt } };
+      }
+      if (persona.voiceId) {
+        overrides.tts = { voice_id: persona.voiceId };
+      }
+    }
+
+    if (overrides.agent || overrides.tts) {
+      elWs.send(JSON.stringify({
+        type: 'conversation_initiation_client_data',
+        conversation_config_override: overrides,
+      }));
+      console.log(`[ElevenLabs] Sent persona override (${persona?.id || 'unknown'}, ${direction})`);
+    }
   });
 
   elWs.on('message', (data) => {
