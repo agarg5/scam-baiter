@@ -4,8 +4,13 @@ node_modules/
 logs/conversations/*.json
 !logs/conversations/.gitkeep
 logs/sims/
+logs/sms/
 .DS_Store
 *.log
+
+# Bun lockfile — this project ships an npm lockfile.
+bun.lock
+bun.lockb
 
 # Local-only adversarial/training tooling — not part of the OSS release.
 prompts/raj.js

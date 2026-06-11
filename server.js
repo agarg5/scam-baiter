@@ -4,6 +4,8 @@ const http = require('http');
 const WebSocket = require('ws');
 const { createElevenLabsBridge } = require('./services/elevenlabs');
 const { createConversationLog } = require('./services/logger');
+const { getPersona } = require('./prompts/personas');
+const { validateSignalWireSignature, validateStreamToken } = require('./services/security');
 
 const app = express();
 app.use(express.json());
@@ -14,20 +16,22 @@ app.use(express.urlencoded({ extended: false }));
 const inboundRouter = require('./routes/inbound');
 const outboundRouter = require('./routes/outbound');
 const smsRouter = require('./routes/sms');
+const dashboardRouter = require('./routes/dashboard');
 
-app.use('/inbound', inboundRouter);
+app.use('/inbound', validateSignalWireSignature, inboundRouter);
 app.use('/api/call', outboundRouter);
-app.use('/outbound-twiml', (req, res, next) => {
+app.use('/outbound-twiml', validateSignalWireSignature, (req, res, next) => {
   req.url = '/twiml';
   outboundRouter(req, res, next);
 });
-app.use('/sms', smsRouter);
+app.use('/sms', validateSignalWireSignature, smsRouter);
+app.use('/dashboard', dashboardRouter);
 
 // Health check
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'scam-baiter' }));
 
 // Call status callback (Twilio fires this on call state changes)
-app.post('/call-status', (req, res) => {
+app.post('/call-status', validateSignalWireSignature, (req, res) => {
   console.log(`[Status] Call ${req.body.CallSid}: ${req.body.CallStatus}`);
   res.sendStatus(200);
 });
@@ -43,6 +47,12 @@ wss.on('connection', (ws, req) => {
   const params = new URLSearchParams(req.url.replace('/media-stream', '').replace('?', ''));
   const direction = params.get('direction') || 'inbound';
   const personaFromQuery = params.get('persona');
+
+  if (!validateStreamToken(params.get('token'))) {
+    console.warn('[WS] Rejected media-stream connection: bad or missing token');
+    ws.close(1008, 'unauthorized');
+    return;
+  }
 
   console.log(`[WS] New media stream connection (${direction})`);
 
@@ -64,21 +74,24 @@ wss.on('connection', (ws, req) => {
       if (msg.event === 'start' && !bridgeCreated) {
         callSid = msg.start.callSid;
         callerNumber = msg.start.customParameters?.callerNumber || 'unknown';
-        const persona = msg.start.customParameters?.persona || personaFromQuery || process.env.DEFAULT_PERSONA || 'tyler';
+        const personaId = msg.start.customParameters?.persona || personaFromQuery || process.env.DEFAULT_PERSONA || 'tyler';
+        const persona = getPersona(personaId);
         const streamSid = msg.start.streamSid;
 
         conversationLogger = createConversationLog({
           direction,
           scammerNumber: callerNumber,
           ourNumber: process.env.SIGNALWIRE_PHONE_NUMBER,
-          persona,
+          persona: persona.id,
         });
 
-        console.log(`[WS] Call started: ${callSid}`);
+        console.log(`[WS] Call started: ${callSid} (persona=${persona.id})`);
 
         elBridge = createElevenLabsBridge(ws, {
           callSid,
           streamSid,
+          persona,
+          direction,
           onTranscript: (turn) => {
             console.log(`[${turn.speaker.toUpperCase()}] ${turn.text}`);
             if (conversationLogger) conversationLogger.addTurn(turn);

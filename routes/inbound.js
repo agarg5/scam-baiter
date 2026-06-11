@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
+const { streamToken } = require('../services/security');
 
 /**
  * POST /inbound
@@ -14,9 +15,12 @@ router.post('/', (req, res) => {
 
   twiml.pause({ length: 1 });
 
+  const token = streamToken();
+  const tokenQs = token ? `&token=${encodeURIComponent(token)}` : '';
+
   const connect = twiml.connect();
   const stream = connect.stream({
-    url: `wss://${host}/media-stream?persona=${encodeURIComponent(persona)}`,
+    url: `wss://${host}/media-stream?persona=${encodeURIComponent(persona)}${tokenQs}`,
     name: 'scam-baiter-stream',
   });
   stream.parameter({ name: 'persona', value: persona });
