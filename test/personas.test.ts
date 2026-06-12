@@ -1,6 +1,6 @@
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { getPersona, listPersonas, PERSONAS } = require('../prompts/personas');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { getPersona, listPersonas, PERSONAS } from '../prompts/personas';
 
 test('ships at least the two documented personas', () => {
   assert.ok(PERSONAS.tyler, 'tyler persona should load');
@@ -29,6 +29,6 @@ test('listPersonas returns summary objects without prompt bodies', () => {
   assert.ok(Array.isArray(list));
   for (const item of list) {
     assert.ok(item.id && item.name);
-    assert.strictEqual(item.systemPrompt, undefined, 'should not leak full prompt');
+    assert.strictEqual((item as Record<string, unknown>).systemPrompt, undefined, 'should not leak full prompt');
   }
 });

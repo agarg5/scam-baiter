@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .env
 .env.local
 logs/conversations/*.json
@@ -14,5 +15,8 @@ bun.lockb
 
 # Local-only adversarial/training tooling — not part of the OSS release.
 prompts/raj.js
+prompts/raj.ts
 scripts/voice-sim.js
+scripts/voice-sim.ts
 scripts/grade.js
+scripts/grade.ts

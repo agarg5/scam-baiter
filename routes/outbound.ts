@@ -1,15 +1,16 @@
-const express = require('express');
+import express, { Request, Response } from 'express';
+import twilio from 'twilio';
+import { client } from '../services/client';
+import { getPersona, listPersonas } from '../prompts/personas';
+import { requireApiKey, streamToken } from '../services/security';
+
 const router = express.Router();
-const twilio = require('twilio');
-const { client } = require('../services/client');
-const { getPersona, listPersonas } = require('../prompts/personas');
-const { requireApiKey, streamToken } = require('../services/security');
 
 /**
  * GET /api/call/personas
  * Returns the list of available personas for the dashboard / CLI tooling.
  */
-router.get('/personas', (req, res) => {
+router.get('/personas', (_req: Request, res: Response) => {
   res.json({ personas: listPersonas() });
 });
 
@@ -20,8 +21,8 @@ router.get('/personas', (req, res) => {
  * Initiates a SignalWire outbound call to the given number, then connects it
  * to ElevenLabs via the same media-stream WebSocket bridge.
  */
-router.post('/', requireApiKey, async (req, res) => {
-  const { phoneNumber, persona } = req.body;
+router.post('/', requireApiKey, async (req: Request, res: Response) => {
+  const { phoneNumber, persona } = req.body as { phoneNumber?: string; persona?: string };
 
   if (!phoneNumber) {
     return res.status(400).json({ error: 'phoneNumber is required' });
@@ -43,7 +44,7 @@ router.post('/', requireApiKey, async (req, res) => {
     res.json({ success: true, callSid: call.sid, to: phoneNumber, persona: chosen.id });
   } catch (err) {
     console.error('[Outbound] Failed to initiate call:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
@@ -53,9 +54,9 @@ router.post('/', requireApiKey, async (req, res) => {
  * a Media Stream, with the persona id attached as a custom stream parameter so
  * the WebSocket handler knows which persona to log.
  */
-router.post('/twiml', (req, res) => {
+router.post('/twiml', (req: Request, res: Response) => {
   const host = req.headers.host;
-  const persona = req.query.persona || 'tyler';
+  const persona = (req.query.persona as string) || 'tyler';
   const twiml = new twilio.twiml.VoiceResponse();
 
   const token = streamToken();
@@ -74,4 +75,4 @@ router.post('/twiml', (req, res) => {
   res.send(twiml.toString());
 });
 
-module.exports = router;
+export = router;

@@ -1,11 +1,11 @@
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { parseList } = require('../scripts/batch-call');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parseList } from '../scripts/batch-call';
 
-function writeTmp(contents) {
+function writeTmp(contents: string): string {
   const file = path.join(os.tmpdir(), `numbers-${process.pid}-${Math.floor(performance.now())}.txt`);
   fs.writeFileSync(file, contents);
   return file;

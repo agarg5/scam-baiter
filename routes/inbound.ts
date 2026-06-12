@@ -1,16 +1,17 @@
-const express = require('express');
+import express, { Request, Response } from 'express';
+import twilio from 'twilio';
+import { streamToken } from '../services/security';
+
 const router = express.Router();
-const twilio = require('twilio');
-const { streamToken } = require('../services/security');
 
 /**
  * POST /inbound
  * SignalWire webhook for incoming calls. Returns LaML (compatible with TwiML)
  * that connects the call to a Media Stream WebSocket.
  */
-router.post('/', (req, res) => {
+router.post('/', (req: Request, res: Response) => {
   const host = req.headers.host;
-  const persona = req.query.persona || process.env.DEFAULT_PERSONA || 'tyler';
+  const persona = (req.query.persona as string) || process.env.DEFAULT_PERSONA || 'tyler';
   const twiml = new twilio.twiml.VoiceResponse();
 
   twiml.pause({ length: 1 });
@@ -31,4 +32,4 @@ router.post('/', (req, res) => {
   res.send(twiml.toString());
 });
 
-module.exports = router;
+export = router;

@@ -1,13 +1,15 @@
-const express = require('express');
+import express, { Request, Response } from 'express';
+import { readConversations, computeStats } from '../services/logReader';
+import { requireDashboardKey } from '../services/security';
+import type { ConversationTurn } from '../types';
+
 const router = express.Router();
-const { readConversations, computeStats } = require('../services/logReader');
-const { requireDashboardKey } = require('../services/security');
 
 /**
  * Escape user-controlled text before embedding in HTML. Transcripts contain
  * whatever the scammer typed, so this is the one thing we must not skip.
  */
-function esc(str) {
+function esc(str: unknown): string {
   return String(str == null ? '' : str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -16,7 +18,7 @@ function esc(str) {
     .replace(/'/g, '&#39;');
 }
 
-function fmtDuration(seconds) {
+function fmtDuration(seconds: unknown): string {
   const s = Math.round(Number(seconds) || 0);
   const m = Math.floor(s / 60);
   const rem = s % 60;
@@ -24,7 +26,7 @@ function fmtDuration(seconds) {
   return `${m}m ${rem}s`;
 }
 
-function renderTranscript(turns = []) {
+function renderTranscript(turns: ConversationTurn[] = []): string {
   if (!turns.length) return '<p class="muted">No transcript captured.</p>';
   return turns.map((t) => {
     const who = t.speaker === 'agent' ? 'agent' : 'scammer';
@@ -58,7 +60,7 @@ const STYLE = `
  * Renders an HTML overview of all saved conversations: total time wasted,
  * per-persona breakdown, and browsable transcripts.
  */
-router.get('/', requireDashboardKey, (req, res) => {
+router.get('/', requireDashboardKey, (req: Request, res: Response) => {
   const convos = readConversations();
   const stats = computeStats(convos);
 
@@ -67,7 +69,7 @@ router.get('/', requireDashboardKey, (req, res) => {
     .map(([id, s]) => `<tr><td>${esc(id)}</td><td>${s.calls}</td><td>${fmtDuration(s.seconds)}</td></tr>`)
     .join('') || '<tr><td colspan="3" class="muted">No calls yet.</td></tr>';
 
-  const keyQs = req.query.key ? `?key=${esc(req.query.key)}` : '';
+  const keyQs = typeof req.query.key === 'string' ? `?key=${esc(req.query.key)}` : '';
 
   const convoBlocks = convos.map((c) => `
     <details>
@@ -112,4 +114,4 @@ router.get('/', requireDashboardKey, (req, res) => {
   res.type('html').send(html);
 });
 
-module.exports = router;
+export = router;
