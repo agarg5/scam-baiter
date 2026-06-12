@@ -1,23 +1,39 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import type { ConversationLog } from '../types';
 
-const LOGS_DIR = path.join(__dirname, '..', 'logs', 'conversations');
+const LOGS_DIR = path.join(__dirname, '..', '..', 'logs', 'conversations');
+
+/** A stored conversation plus the file it came from. */
+export type StoredConversation = ConversationLog & { file: string };
+
+export interface PersonaStat {
+  calls: number;
+  seconds: number;
+}
+
+export interface DashboardStats {
+  totalCalls: number;
+  totalSeconds: number;
+  byPersona: Record<string, PersonaStat>;
+  byDirection: { inbound: number; outbound: number };
+}
 
 /**
  * Read every saved conversation log, newest first. Malformed files are skipped
  * rather than crashing the dashboard.
  */
-function readConversations() {
+function readConversations(): StoredConversation[] {
   if (!fs.existsSync(LOGS_DIR)) return [];
 
   const files = fs.readdirSync(LOGS_DIR).filter((f) => f.endsWith('.json'));
-  const convos = [];
+  const convos: StoredConversation[] = [];
   for (const file of files) {
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(LOGS_DIR, file), 'utf8'));
+      const data = JSON.parse(fs.readFileSync(path.join(LOGS_DIR, file), 'utf8')) as ConversationLog;
       convos.push({ file, ...data });
     } catch (err) {
-      console.error(`[logReader] Skipping ${file}:`, err.message);
+      console.error(`[logReader] Skipping ${file}:`, (err as Error).message);
     }
   }
   convos.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
@@ -28,8 +44,8 @@ function readConversations() {
  * Aggregate stats across all conversations: total time wasted, call counts,
  * and a per-persona breakdown.
  */
-function computeStats(convos) {
-  const stats = {
+function computeStats(convos: StoredConversation[]): DashboardStats {
+  const stats: DashboardStats = {
     totalCalls: convos.length,
     totalSeconds: 0,
     byPersona: {},
@@ -52,4 +68,4 @@ function computeStats(convos) {
   return stats;
 }
 
-module.exports = { readConversations, computeStats, LOGS_DIR };
+export { readConversations, computeStats, LOGS_DIR };

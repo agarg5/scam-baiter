@@ -2,11 +2,11 @@
 
 An open-source voice bot that wastes scammers' time. Pick up a spam call, let the bot handle it, and let the scammer burn minutes talking to "Tyler" or "Margaret" while you get your afternoon back.
 
-Built on **SignalWire** (Twilio-compatible telephony) + **ElevenLabs Conversational AI** (voice agent) + **OpenAI GPT-4o** (SMS replies).
+Built on **SignalWire** (Twilio-compatible telephony) + **ElevenLabs Conversational AI** (voice agent) + **OpenAI GPT-4o** (SMS replies). Written in **TypeScript** (compiled to `dist/` with `tsc`).
 
 - 📞 Inbound and outbound calls
 - 💬 SMS replies (history persisted to disk, survives restarts)
-- 🎭 Pluggable personas — drop a `.js` file into `prompts/` and it's live, prompt + voice applied per call
+- 🎭 Pluggable personas — drop a `.ts` file into `prompts/` and it's live, prompt + voice applied per call
 - 📋 Batch dialer — feed it a list of numbers
 - 📝 Full transcripts saved per call
 - 📊 Dashboard — total time wasted, per-persona stats, browsable transcripts
@@ -35,8 +35,13 @@ git clone https://github.com/agarg5/scam-baiter.git
 cd scam-baiter
 npm install
 cp .env.example .env    # fill in credentials
-npm start
+npm run build           # compile TypeScript → dist/
+npm start               # runs dist/server.js
 ```
+
+> Requires **Node 18+** (uses the built-in `fetch` and `node --test`).
+> `npm run build` must run before `npm start`. During development, `npm run dev`
+> watches and recompiles while running the server with auto-reload.
 
 In a second terminal, expose your server to the internet:
 
@@ -104,28 +109,32 @@ Switch the default with `DEFAULT_PERSONA=margaret` in `.env`, or pick per-call (
 
 ### How each persona is structured
 
-Every persona module exports the same shape:
+Every persona module exports the same shape (typed by the `Persona` interface in `types.ts`):
 
-```js
-// prompts/tyler.js
-module.exports = {
+```ts
+// prompts/tyler.ts
+import type { Persona } from '../types';
+
+const tyler: Persona = {
   id: 'tyler',                              // URL-safe key used everywhere
   name: 'Tyler Bennett',                    // display name
   description: 'Distractible millennial.',  // one-liner for dashboards / logs
   voiceId: 'loWZgmt1ZsitHiWYOGDJ',          // ElevenLabs voice id, or null
   systemPrompt: `...`,                      // inbound prompt (they call us)
-  outboundPrompt: `...` + systemPrompt,     // outbound prompt (we call them) — usually adds an opener
+  outboundPrompt: `...`,                    // outbound prompt (we call them) — usually adds an opener
 };
+
+export = tyler;   // the loader reads the default export's `id`
 ```
 
 `voiceId` should point at a voice you've added to your ElevenLabs voice library. Match the voice to the character — a twentysomething voice for Tyler, a grandma voice for Margaret. If `voiceId` is `null`, the agent uses whatever voice is configured in the ElevenLabs dashboard.
 
 ### Adding a new persona
 
-1. Copy an existing file: `cp prompts/tyler.js prompts/sandra.js`.
-2. Rewrite the prompt for your character — use the structure below.
+1. Copy an existing file: `cp prompts/tyler.ts prompts/sandra.ts`.
+2. Rewrite the prompt for your character — use the structure below. Change the `id` and `export =` variable name.
 3. (Optional) Add a voice: find a voice on [voices.elevenlabs.io](https://voices.elevenlabs.io), add it to your library, paste the voice id into `voiceId`.
-4. Restart the server. Verify with `curl http://localhost:8000/api/call/personas`.
+4. Rebuild and restart (`npm run build && npm start`). Verify with `curl http://localhost:8000/api/call/personas`.
 
 That's the whole workflow. No registration, no routes, no config.
 
@@ -240,22 +249,36 @@ It prints the running transcript and a JSON score (character consistency, PII sa
 
 > Note: the simulator tests the *prompt* via OpenAI in text. It's a fast proxy for prompt quality, not a full voice-path test — TTS phrasing, latency, and barge-in still need a real or recorded call.
 
+## Development
+
+The source is TypeScript; `tsc` compiles it to `dist/` (gitignored).
+
+| Command | What it does |
+|---|---|
+| `npm run build` | Compile `src` → `dist/` |
+| `npm start` | Run the compiled server (`dist/server.js`) |
+| `npm run dev` | Watch-compile + run with auto-reload |
+| `npm run typecheck` | Type-check only, no emit (`tsc --noEmit`) |
+| `npm test` | Compile, then run the test suite |
+
+Layout mirrors the runtime: `server.ts`, `routes/`, `services/`, `prompts/`, `scripts/`, with shared types in `types.ts`.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-Runs the `node:test` suite under `test/` — persona loading, batch-list parsing, the persisted SMS store, and the auth guards. No network or credentials required.
+Compiles, then runs the `node:test` suite (`dist/test/`) — persona loading, batch-list parsing, the persisted SMS store, and the auth guards. No network or credentials required.
 
 ## Deployment
 
-Needs WebSocket support. Known-good:
-- **Railway** — `railway up`, set env vars, done
-- **Fly.io** — `fly deploy`
-- **Render** — enable WebSocket in service settings
+Needs WebSocket support, and a build step (set the build command to `npm install && npm run build`, start command to `npm start`). Known-good:
+- **Railway** — auto-runs `npm run build` then `npm start`; set env vars
+- **Fly.io** — `fly deploy` (build via the Dockerfile/buildpack, run `npm start`)
+- **Render** — build `npm install && npm run build`, start `npm start`, enable WebSocket in service settings
 
-Remember to update the SignalWire voice/SMS webhooks to the deployed host.
+Remember to update the SignalWire voice/SMS webhooks to the deployed host. Because `dist/` is gitignored, the host must build from source — don't expect a committed `dist/`.
 
 ## Legal & ethical
 

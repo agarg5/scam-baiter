@@ -1,24 +1,37 @@
-require('dotenv').config();
-const WebSocket = require('ws');
+import 'dotenv/config';
+import WebSocket, { RawData } from 'ws';
+import type { Persona, ConversationTurn, Direction } from '../types';
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
 
+export interface BridgeOptions {
+  /** Twilio call SID */
+  callSid?: string;
+  /** Twilio stream SID */
+  streamSid?: string;
+  /** ElevenLabs agent ID (defaults to env var) */
+  agentId?: string;
+  /** Persona module ({ systemPrompt, outboundPrompt, voiceId }) */
+  persona?: Persona;
+  /** 'inbound' or 'outbound' (selects which prompt to use) */
+  direction?: Direction;
+  /** Called with { speaker, text } on transcript events */
+  onTranscript?: (turn: ConversationTurn) => void;
+  /** Called when the conversation ends */
+  onEnd?: () => void;
+}
+
+interface ConfigOverride {
+  agent?: { prompt: { prompt: string } };
+  tts?: { voice_id: string };
+}
+
 /**
  * Creates a WebSocket connection to ElevenLabs Conversational AI and bridges it
  * with the Twilio Media Stream WebSocket.
- *
- * @param {WebSocket} twilioWs - The WebSocket connection from Twilio
- * @param {object} opts - Options
- * @param {string} opts.callSid - Twilio call SID
- * @param {string} opts.streamSid - Twilio stream SID
- * @param {string} opts.agentId - ElevenLabs agent ID (defaults to env var)
- * @param {object} opts.persona - Persona module ({ systemPrompt, outboundPrompt, voiceId })
- * @param {string} opts.direction - 'inbound' or 'outbound' (selects which prompt to use)
- * @param {function} opts.onTranscript - Called with { speaker, text } on transcript events
- * @param {function} opts.onEnd - Called when the conversation ends
  */
-function createElevenLabsBridge(twilioWs, opts = {}) {
+function createElevenLabsBridge(twilioWs: WebSocket, opts: BridgeOptions = {}): { elWs: WebSocket } {
   const {
     callSid,
     agentId = ELEVENLABS_AGENT_ID,
@@ -35,10 +48,10 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
 
   const elWs = new WebSocket(wsUrl, { headers });
 
-  let streamSid = null;
+  let streamSid: string | null = null;
   let isClosed = false;
 
-  function safeClose() {
+  function safeClose(): void {
     if (!isClosed) {
       isClosed = true;
       if (elWs.readyState === WebSocket.OPEN) elWs.close();
@@ -54,7 +67,7 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
     // prompt/voice is configured in the ElevenLabs dashboard. For overrides to
     // take effect, the agent's Security settings must allow overriding the
     // system prompt, first message, and voice (see README).
-    const overrides = {};
+    const overrides: ConfigOverride = {};
     if (persona) {
       const prompt = direction === 'outbound'
         ? (persona.outboundPrompt || persona.systemPrompt)
@@ -77,9 +90,9 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
     }
   });
 
-  elWs.on('message', (data) => {
+  elWs.on('message', (data: RawData) => {
     try {
-      const msg = JSON.parse(data);
+      const msg = JSON.parse(data.toString());
 
       switch (msg.type) {
         case 'conversation_initiation_metadata':
@@ -143,9 +156,9 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
   });
 
   // Handle incoming Twilio messages and forward audio to ElevenLabs
-  twilioWs.on('message', (data) => {
+  twilioWs.on('message', (data: RawData) => {
     try {
-      const msg = JSON.parse(data);
+      const msg = JSON.parse(data.toString());
 
       switch (msg.event) {
         case 'start':
@@ -186,4 +199,4 @@ function createElevenLabsBridge(twilioWs, opts = {}) {
   return { elWs };
 }
 
-module.exports = { createElevenLabsBridge };
+export { createElevenLabsBridge };

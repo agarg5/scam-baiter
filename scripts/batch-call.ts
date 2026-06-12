@@ -3,7 +3,7 @@
  * Batch dialer — calls every number in a list, spaced by a delay.
  *
  * Usage:
- *   node scripts/batch-call.js <path-to-list> [--persona tyler] [--delay 30] [--host https://foo.ngrok.io]
+ *   node dist/scripts/batch-call.js <path-to-list> [--persona tyler] [--delay 30] [--host https://foo.ngrok.io]
  *
  * List file format: one number per line. Blank lines and lines starting with
  * `#` are ignored. A line can optionally override the persona like:
@@ -15,19 +15,23 @@
  * The script POSTs to the running server's /api/call endpoint, so the server
  * must be up and publicly reachable (cloudflared / ngrok / deployed).
  */
-require('dotenv').config();
+import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
 
-const fs = require('fs');
-const path = require('path');
+export interface CallEntry {
+  phoneNumber: string;
+  persona: string;
+}
 
 /**
  * Parse a numbers list file into call entries. Blank lines and `#` comments are
  * ignored; an optional second token on a line overrides the persona.
  * Exported so it can be unit-tested.
  */
-function parseList(file, defaultPersona = 'tyler') {
+function parseList(file: string, defaultPersona = 'tyler'): CallEntry[] {
   const lines = fs.readFileSync(file, 'utf8').split('\n');
-  const entries = [];
+  const entries: CallEntry[] = [];
   for (const raw of lines) {
     const line = raw.replace(/#.*$/, '').trim();
     if (!line) continue;
@@ -41,8 +45,8 @@ function parseList(file, defaultPersona = 'tyler') {
   return entries;
 }
 
-async function placeCall(host, { phoneNumber, persona }) {
-  const headers = { 'Content-Type': 'application/json' };
+async function placeCall(host: string, { phoneNumber, persona }: CallEntry): Promise<any> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (process.env.API_SECRET) headers['X-Api-Key'] = process.env.API_SECRET;
 
   const res = await fetch(`${host}/api/call`, {
@@ -56,18 +60,18 @@ async function placeCall(host, { phoneNumber, persona }) {
   return res.json();
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-async function main() {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0 || args[0].startsWith('--')) {
-    console.error('Usage: node scripts/batch-call.js <list-file> [--persona X] [--delay N] [--host URL]');
+    console.error('Usage: node dist/scripts/batch-call.js <list-file> [--persona X] [--delay N] [--host URL]');
     process.exit(1);
   }
 
   const listPath = path.resolve(args[0]);
   const flags = Object.fromEntries(
-    args.slice(1).reduce((acc, a, i, arr) => {
+    args.slice(1).reduce<[string, string][]>((acc, a, i, arr) => {
       if (a.startsWith('--')) acc.push([a.slice(2), arr[i + 1]]);
       return acc;
     }, [])
@@ -88,7 +92,7 @@ async function main() {
       const r = await placeCall(host, entry);
       console.log(`[batch]   OK callSid=${r.callSid}`);
     } catch (err) {
-      console.error(`[batch]   FAIL: ${err.message}`);
+      console.error(`[batch]   FAIL: ${(err as Error).message}`);
     }
     if (i < entries.length - 1) {
       console.log(`[batch]   sleeping ${delaySec}s…`);
@@ -98,7 +102,7 @@ async function main() {
   console.log('\n[batch] Done.');
 }
 
-module.exports = { parseList, placeCall };
+export { parseList, placeCall };
 
 if (require.main === module) {
   main();

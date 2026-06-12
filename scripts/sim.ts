@@ -8,22 +8,22 @@
  * voice-sim harness referenced in the README.
  *
  * Usage:
- *   node scripts/sim.js [--persona tyler] [--pretext amazon] [--turns 12] [--model gpt-4o]
+ *   node dist/scripts/sim.js [--persona tyler] [--pretext amazon] [--turns 12] [--model gpt-4o]
  *
  * Pretexts: amazon, irs, techsupport, sweepstakes  (or pass any free-text string)
  *
  * Requires OPENAI_API_KEY. Writes a JSON transcript + scores to logs/sims/.
  */
-require('dotenv').config();
-
-const fs = require('fs');
-const path = require('path');
-const OpenAI = require('openai');
-const { getPersona } = require('../prompts/personas');
+import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
+import OpenAI from 'openai';
+import { getPersona } from '../prompts/personas';
+import type { ChatMessage } from '../services/openai';
 
 const args = process.argv.slice(2);
 const flags = Object.fromEntries(
-  args.reduce((acc, a, i, arr) => {
+  args.reduce<[string, string][]>((acc, a, i, arr) => {
     if (a.startsWith('--')) acc.push([a.slice(2), arr[i + 1]]);
     return acc;
   }, [])
@@ -34,7 +34,7 @@ const turns = parseInt(flags.turns || '12', 10);
 const model = flags.model || 'gpt-4o';
 const pretextKey = flags.pretext || 'amazon';
 
-const PRETEXTS = {
+const PRETEXTS: Record<string, string> = {
   amazon: 'You claim to be from Amazon fraud prevention. A $999 iPhone was supposedly ordered on their account; you need to "verify their identity" to cancel it, eventually steering toward gift cards or remote access.',
   irs: 'You claim to be an IRS officer. There is a "tax fraud case" and a warrant pending; you pressure them to confirm SSN and pay immediately to avoid arrest.',
   techsupport: 'You claim to be Microsoft/Windows technical support. Their computer is "sending error reports / infected"; you push them to install remote-access software.',
@@ -57,14 +57,27 @@ if (!process.env.OPENAI_API_KEY) {
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const persona = getPersona(personaId);
 
-async function chat(system, history, model) {
+interface TranscriptTurn {
+  speaker: 'scammer' | 'agent';
+  text: string;
+}
+
+interface Scores {
+  character_consistency?: number;
+  pii_safety?: number;
+  engagement?: number;
+  notes?: string;
+  error?: string;
+}
+
+async function chat(system: string, history: ChatMessage[], chatModel: string): Promise<string> {
   const res = await openai.chat.completions.create({
-    model,
+    model: chatModel,
     messages: [{ role: 'system', content: system }, ...history],
     max_tokens: 250,
     temperature: 0.9,
   });
-  return res.choices[0].message.content.trim();
+  return (res.choices[0].message.content || '').trim();
 }
 
 const GRADER_SYSTEM = `You are grading a transcript from a scam-baiting bot. The "agent" is a bot pretending to be a real person to waste a scammer's time. The "scammer" is the adversary. Score the AGENT only.
@@ -77,7 +90,7 @@ Return STRICT JSON, no prose, with this shape:
   "notes": "<2-3 sentence critique with the single highest-leverage fix to the persona prompt>"
 }`;
 
-async function grade(transcript) {
+async function grade(transcript: TranscriptTurn[]): Promise<Scores> {
   const rendered = transcript.map((t) => `${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
   const res = await openai.chat.completions.create({
     model,
@@ -89,7 +102,7 @@ async function grade(transcript) {
     temperature: 0.2,
     response_format: { type: 'json_object' },
   });
-  return JSON.parse(res.choices[0].message.content);
+  return JSON.parse(res.choices[0].message.content || '{}') as Scores;
 }
 
 (async () => {
@@ -97,9 +110,9 @@ async function grade(transcript) {
 
   // The scammer opens the call; the baiter responds. We keep two separate
   // histories so each side only sees the other's lines as its counterpart role.
-  const transcript = [];
-  const scammerHistory = []; // from scammer's POV: assistant = scammer, user = baiter
-  const baiterHistory = [];  // from baiter's POV: assistant = baiter, user = scammer
+  const transcript: TranscriptTurn[] = [];
+  const scammerHistory: ChatMessage[] = []; // from scammer's POV: assistant = scammer, user = baiter
+  const baiterHistory: ChatMessage[] = [];  // from baiter's POV: assistant = baiter, user = scammer
 
   let scammerLine = await chat(SCAMMER_SYSTEM, [{ role: 'user', content: '(The mark just picked up. Open the call.)' }], model);
 
@@ -121,16 +134,16 @@ async function grade(transcript) {
   }
 
   console.log('[sim] Grading…\n');
-  let scores;
+  let scores: Scores;
   try {
     scores = await grade(transcript);
     console.log(JSON.stringify(scores, null, 2));
   } catch (err) {
-    console.error('[sim] Grading failed:', err.message);
-    scores = { error: err.message };
+    console.error('[sim] Grading failed:', (err as Error).message);
+    scores = { error: (err as Error).message };
   }
 
-  const SIMS_DIR = path.join(__dirname, '..', 'logs', 'sims');
+  const SIMS_DIR = path.join(__dirname, '..', '..', 'logs', 'sims');
   if (!fs.existsSync(SIMS_DIR)) fs.mkdirSync(SIMS_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const file = path.join(SIMS_DIR, `${stamp}_${persona.id}_${pretextKey}.json`);

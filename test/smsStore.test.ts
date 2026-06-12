@@ -1,8 +1,8 @@
-const { test, after } = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
-const { getHistory, appendTurn, SMS_DIR } = require('../services/smsStore');
+import { test, after } from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { getHistory, appendTurn, SMS_DIR } from '../services/smsStore';
 
 // Use a unique fake number so we never touch real conversation files.
 const NUM = `+1999000${process.pid % 10000}`.padEnd(12, '0').slice(0, 12);

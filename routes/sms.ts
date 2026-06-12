@@ -1,8 +1,9 @@
-const express = require('express');
+import express, { Request, Response } from 'express';
+import twilio from 'twilio';
+import { generateSmsReply } from '../services/openai';
+import { getHistory, appendTurn } from '../services/smsStore';
+
 const router = express.Router();
-const twilio = require('twilio');
-const { generateSmsReply } = require('../services/openai');
-const { getHistory, appendTurn } = require('../services/smsStore');
 
 /**
  * POST /sms
@@ -10,9 +11,9 @@ const { getHistory, appendTurn } = require('../services/smsStore');
  * persona (default env DEFAULT_PERSONA, override with ?persona=... on the webhook).
  * Conversation history is persisted to disk so it survives restarts.
  */
-router.post('/', async (req, res) => {
-  const { From: from, Body: body } = req.body;
-  const persona = req.query.persona || process.env.DEFAULT_PERSONA || 'tyler';
+router.post('/', async (req: Request, res: Response) => {
+  const { From: from, Body: body } = req.body as { From: string; Body: string };
+  const persona = (req.query.persona as string) || process.env.DEFAULT_PERSONA || 'tyler';
 
   console.log(`[SMS] ${from} (${persona}): ${body}`);
 
@@ -39,4 +40,4 @@ router.post('/', async (req, res) => {
   }
 });
 
-module.exports = router;
+export = router;
