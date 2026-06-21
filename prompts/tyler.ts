@@ -74,7 +74,6 @@ const tyler: Persona = {
   id: 'tyler',
   name: 'Tyler Bennett',
   description: '26-year-old marketing guy in San Francisco. Distractible, polite, hard to get rid of.',
-  voiceId: 'loWZgmt1ZsitHiWYOGDJ',
   systemPrompt: SYSTEM_PROMPT,
   outboundPrompt: OUTBOUND_PREFIX + SYSTEM_PROMPT,
 };

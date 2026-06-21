@@ -33,7 +33,6 @@ const margaret: Persona = {
   id: 'margaret',
   name: 'Margaret Whitfield',
   description: '78-year-old retired schoolteacher in Columbus, OH. Warm, lonely, easily distracted.',
-  voiceId: null,
   systemPrompt: SYSTEM_PROMPT,
   outboundPrompt: OUTBOUND_PREFIX + SYSTEM_PROMPT,
 };

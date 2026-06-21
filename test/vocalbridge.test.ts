@@ -13,7 +13,6 @@ const tyler: Persona = {
   id: 'tyler',
   name: 'Tyler Bennett',
   description: 'Test persona',
-  voiceId: null,
   systemPrompt: 'test prompt',
   outboundPrompt: 'test outbound',
 };
@@ -22,7 +21,6 @@ const custom: Persona = {
   id: 'custom',
   name: 'Custom',
   description: 'Custom persona with vbAgentId',
-  voiceId: null,
   vbAgentId: 'inline-agent-uuid',
   systemPrompt: 'test',
   outboundPrompt: 'test',
@@ -41,7 +39,6 @@ test('resolveAgentId falls back to VOCALBRIDGE_DEFAULT_AGENT_ID', () => {
     id: 'unknown',
     name: 'Unknown',
     description: '',
-    voiceId: null,
     systemPrompt: '',
     outboundPrompt: '',
   };
@@ -54,7 +51,6 @@ test('resolveAgentId throws when no mapping exists', () => {
     id: 'orphan',
     name: 'Orphan',
     description: '',
-    voiceId: null,
     systemPrompt: '',
     outboundPrompt: '',
   };

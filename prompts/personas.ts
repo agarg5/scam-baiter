@@ -10,7 +10,6 @@ import type { Persona, PersonaSummary } from '../types';
  *     id: 'myguy',                 // unique key (used in ?persona=... and API)
  *     name: 'Display Name',
  *     description: 'One-liner shown in logs and the dashboard.',
- *     voiceId: 'elevenlabs_voice_id_or_null',
  *     systemPrompt: '...',         // main agent prompt
  *     outboundPrompt: '...',       // prepended with the opening line for outbound
  *   }
@@ -47,11 +46,10 @@ function getPersona(name?: string): Persona {
 }
 
 function listPersonas(): PersonaSummary[] {
-  return Object.values(PERSONAS).map(({ id, name, description, voiceId }) => ({
+  return Object.values(PERSONAS).map(({ id, name, description }) => ({
     id,
     name,
     description,
-    voiceId,
   }));
 }
 

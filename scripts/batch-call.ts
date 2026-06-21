@@ -3,7 +3,7 @@
  * Batch dialer — calls every number in a list, spaced by a delay.
  *
  * Usage:
- *   node dist/scripts/batch-call.js <path-to-list> [--persona tyler] [--delay 30] [--host https://foo.ngrok.io]
+ *   node dist/scripts/batch-call.js <path-to-list> [--persona tyler] [--delay 30]
  *
  * List file format: one number per line. Blank lines and lines starting with
  * `#` are ignored. A line can optionally override the persona like:
@@ -12,15 +12,12 @@
  *   +18005550199   margaret   # trailing comment
  *   # this is a comment
  *
- * In VocalBridge mode (VOICE_PROVIDER=vocalbridge), calls go directly through
- * VB's API without requiring the server to be running. In ElevenLabs mode,
- * the script POSTs to the running server's /api/call endpoint.
+ * Calls go directly through VocalBridge's REST API — the server does not need
+ * to be running.
  */
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-
-const VOICE_PROVIDER = process.env.VOICE_PROVIDER || 'elevenlabs';
 
 export interface CallEntry {
   phoneNumber: string;
@@ -48,23 +45,7 @@ function parseList(file: string, defaultPersona = 'tyler'): CallEntry[] {
   return entries;
 }
 
-async function placeCallViaServer(host: string, { phoneNumber, persona }: CallEntry): Promise<Record<string, unknown>> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (process.env.API_SECRET) headers['X-Api-Key'] = process.env.API_SECRET;
-
-  const res = await fetch(`${host}/api/call`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ phoneNumber, persona }),
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res.json() as Promise<Record<string, unknown>>;
-}
-
 async function placeCallViaVB({ phoneNumber, persona }: CallEntry): Promise<Record<string, unknown>> {
-  // Dynamic import to avoid loading VB module when not needed
   const vb = await import('../services/vocalbridge');
   const { getPersona } = await import('../prompts/personas');
   const chosen = getPersona(persona);
@@ -77,7 +58,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0 || args[0].startsWith('--')) {
-    console.error('Usage: node dist/scripts/batch-call.js <list-file> [--persona X] [--delay N] [--host URL]');
+    console.error('Usage: node dist/scripts/batch-call.js <list-file> [--persona X] [--delay N]');
     process.exit(1);
   }
 
@@ -91,22 +72,16 @@ async function main(): Promise<void> {
 
   const defaultPersona = flags.persona || process.env.DEFAULT_PERSONA || 'tyler';
   const delaySec = parseInt(flags.delay || '30', 10);
-  const host = flags.host || process.env.PUBLIC_HOST || `http://localhost:${process.env.PORT || 8000}`;
 
   const entries = parseList(listPath, defaultPersona);
   console.log(`[batch] Loaded ${entries.length} numbers from ${listPath}`);
-  console.log(`[batch] Provider: ${VOICE_PROVIDER}  Delay: ${delaySec}s  Default persona: ${defaultPersona}`);
-  if (VOICE_PROVIDER === 'elevenlabs') {
-    console.log(`[batch] Host: ${host}`);
-  }
+  console.log(`[batch] Delay: ${delaySec}s  Default persona: ${defaultPersona}`);
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     console.log(`\n[batch] (${i + 1}/${entries.length}) → ${entry.phoneNumber} as ${entry.persona}`);
     try {
-      const r = VOICE_PROVIDER === 'vocalbridge'
-        ? await placeCallViaVB(entry)
-        : await placeCallViaServer(host, entry);
+      const r = await placeCallViaVB(entry);
       console.log(`[batch]   OK`, JSON.stringify(r));
     } catch (err) {
       console.error(`[batch]   FAIL: ${(err as Error).message}`);
@@ -119,7 +94,7 @@ async function main(): Promise<void> {
   console.log('\n[batch] Done.');
 }
 
-export { parseList, placeCallViaServer as placeCall };
+export { parseList };
 
 if (require.main === module) {
   main();

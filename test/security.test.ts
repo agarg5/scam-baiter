@@ -5,9 +5,8 @@ import type { Request, Response } from 'express';
 // Configure secrets BEFORE loading the module (it reads env at load time), so
 // we require() it here rather than using a hoisted import.
 process.env.API_SECRET = 'top-secret-key';
-delete process.env.WS_TOKEN; // exercise the "unset = allow" path
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { requireApiKey, validateStreamToken, safeEqual } = require('../services/security') as typeof import('../services/security');
+const { requireApiKey, safeEqual } = require('../services/security') as typeof import('../services/security');
 
 interface MockRes {
   statusCode: number;
@@ -57,7 +56,4 @@ test('requireApiKey accepts a Bearer token', () => {
   assert.strictEqual(nexted, true);
 });
 
-test('validateStreamToken allows any connection when WS_TOKEN is unset', () => {
-  assert.strictEqual(validateStreamToken(undefined), true);
-  assert.strictEqual(validateStreamToken('anything'), true);
-});
+
