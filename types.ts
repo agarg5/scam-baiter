@@ -8,8 +8,17 @@ export interface Persona {
   name: string;
   /** One-liner for dashboards / logs. */
   description: string;
-  /** ElevenLabs voice id, or null to use the dashboard default. */
+  /**
+   * ElevenLabs voice id, or null to use the dashboard default.
+   * Only used when VOICE_PROVIDER=elevenlabs (legacy).
+   */
   voiceId: string | null;
+  /**
+   * Vocal Bridge agent UUID that runs this persona's voice calls.
+   * Set this or the VOCALBRIDGE_AGENT_<ID> env var.
+   * Only used when VOICE_PROVIDER=vocalbridge.
+   */
+  vbAgentId?: string;
   /** Inbound prompt (they call us). */
   systemPrompt: string;
   /** Outbound prompt (we call them) — usually adds an opener. */

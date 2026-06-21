@@ -12,12 +12,15 @@
  *   +18005550199   margaret   # trailing comment
  *   # this is a comment
  *
- * The script POSTs to the running server's /api/call endpoint, so the server
- * must be up and publicly reachable (cloudflared / ngrok / deployed).
+ * In VocalBridge mode (VOICE_PROVIDER=vocalbridge), calls go directly through
+ * VB's API without requiring the server to be running. In ElevenLabs mode,
+ * the script POSTs to the running server's /api/call endpoint.
  */
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
+
+const VOICE_PROVIDER = process.env.VOICE_PROVIDER || 'elevenlabs';
 
 export interface CallEntry {
   phoneNumber: string;
@@ -45,7 +48,7 @@ function parseList(file: string, defaultPersona = 'tyler'): CallEntry[] {
   return entries;
 }
 
-async function placeCall(host: string, { phoneNumber, persona }: CallEntry): Promise<any> {
+async function placeCallViaServer(host: string, { phoneNumber, persona }: CallEntry): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (process.env.API_SECRET) headers['X-Api-Key'] = process.env.API_SECRET;
 
@@ -57,7 +60,16 @@ async function placeCall(host: string, { phoneNumber, persona }: CallEntry): Pro
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${await res.text()}`);
   }
-  return res.json();
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+async function placeCallViaVB({ phoneNumber, persona }: CallEntry): Promise<Record<string, unknown>> {
+  // Dynamic import to avoid loading VB module when not needed
+  const vb = await import('../services/vocalbridge');
+  const { getPersona } = await import('../prompts/personas');
+  const chosen = getPersona(persona);
+  const result = await vb.placeCall(phoneNumber, chosen);
+  return result as unknown as Record<string, unknown>;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -83,14 +95,19 @@ async function main(): Promise<void> {
 
   const entries = parseList(listPath, defaultPersona);
   console.log(`[batch] Loaded ${entries.length} numbers from ${listPath}`);
-  console.log(`[batch] Host: ${host}  Delay: ${delaySec}s  Default persona: ${defaultPersona}`);
+  console.log(`[batch] Provider: ${VOICE_PROVIDER}  Delay: ${delaySec}s  Default persona: ${defaultPersona}`);
+  if (VOICE_PROVIDER === 'elevenlabs') {
+    console.log(`[batch] Host: ${host}`);
+  }
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     console.log(`\n[batch] (${i + 1}/${entries.length}) → ${entry.phoneNumber} as ${entry.persona}`);
     try {
-      const r = await placeCall(host, entry);
-      console.log(`[batch]   OK callSid=${r.callSid}`);
+      const r = VOICE_PROVIDER === 'vocalbridge'
+        ? await placeCallViaVB(entry)
+        : await placeCallViaServer(host, entry);
+      console.log(`[batch]   OK`, JSON.stringify(r));
     } catch (err) {
       console.error(`[batch]   FAIL: ${(err as Error).message}`);
     }
@@ -102,7 +119,7 @@ async function main(): Promise<void> {
   console.log('\n[batch] Done.');
 }
 
-export { parseList, placeCall };
+export { parseList, placeCallViaServer as placeCall };
 
 if (require.main === module) {
   main();

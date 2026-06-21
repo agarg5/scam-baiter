@@ -12,6 +12,8 @@ import smsRouter from './routes/sms';
 import dashboardRouter from './routes/dashboard';
 import type { Direction } from './types';
 
+const VOICE_PROVIDER = process.env.VOICE_PROVIDER || 'elevenlabs';
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -28,7 +30,7 @@ app.use('/sms', validateSignalWireSignature, smsRouter);
 app.use('/dashboard', dashboardRouter);
 
 // Health check
-app.get('/', (_req: Request, res: Response) => res.json({ status: 'ok', service: 'scam-baiter' }));
+app.get('/', (_req: Request, res: Response) => res.json({ status: 'ok', service: 'scam-baiter', voiceProvider: VOICE_PROVIDER }));
 
 // Call status callback (Twilio fires this on call state changes)
 app.post('/call-status', validateSignalWireSignature, (req: Request, res: Response) => {
@@ -41,104 +43,113 @@ app.post('/call-status', validateSignalWireSignature, (req: Request, res: Respon
 const PORT = process.env.PORT || 8000;
 const server = http.createServer(app);
 
-const wss = new WebSocket.Server({ server, path: '/media-stream' });
+// The WebSocket media-stream bridge is only needed in ElevenLabs mode.
+// In VocalBridge mode, VB handles the entire voice/telephony pipeline and
+// audio never touches this server, so we skip the WebSocket setup.
+if (VOICE_PROVIDER === 'elevenlabs') {
+  const wss = new WebSocket.Server({ server, path: '/media-stream' });
 
-wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
-  const params = new URLSearchParams((req.url || '').replace('/media-stream', '').replace('?', ''));
-  const direction = (params.get('direction') as Direction) || 'inbound';
-  const personaFromQuery = params.get('persona');
+  wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+    const params = new URLSearchParams((req.url || '').replace('/media-stream', '').replace('?', ''));
+    const direction = (params.get('direction') as Direction) || 'inbound';
+    const personaFromQuery = params.get('persona');
 
-  if (!validateStreamToken(params.get('token'))) {
-    console.warn('[WS] Rejected media-stream connection: bad or missing token');
-    ws.close(1008, 'unauthorized');
-    return;
-  }
-
-  console.log(`[WS] New media stream connection (${direction})`);
-
-  let callSid: string | null = null;
-  let callerNumber: string | null = null;
-  let conversationLogger: ConversationLogger | null = null;
-
-  // We need the callSid from the first Twilio 'start' event before we
-  // can create the ElevenLabs bridge, so we buffer audio until then.
-  let bridgeCreated = false;
-  const messageBuffer: RawData[] = [];
-
-  // Intercept messages to capture callSid from 'start' event
-  const originalOnMessage = (rawData: RawData) => {
-    try {
-      const msg = JSON.parse(rawData.toString());
-
-      if (msg.event === 'start' && !bridgeCreated) {
-        callSid = msg.start.callSid;
-        callerNumber = msg.start.customParameters?.callerNumber || 'unknown';
-        const personaId = msg.start.customParameters?.persona || personaFromQuery || process.env.DEFAULT_PERSONA || 'tyler';
-        const persona = getPersona(personaId);
-
-        conversationLogger = createConversationLog({
-          direction,
-          scammerNumber: callerNumber as string,
-          ourNumber: process.env.SIGNALWIRE_PHONE_NUMBER,
-          persona: persona.id,
-        });
-
-        console.log(`[WS] Call started: ${callSid} (persona=${persona.id})`);
-
-        createElevenLabsBridge(ws, {
-          callSid: callSid as string,
-          streamSid: msg.start.streamSid,
-          persona,
-          direction,
-          onTranscript: (turn) => {
-            console.log(`[${turn.speaker.toUpperCase()}] ${turn.text}`);
-            if (conversationLogger) conversationLogger.addTurn(turn);
-          },
-          onEnd: () => {
-            if (conversationLogger) {
-              conversationLogger.save();
-              conversationLogger = null;
-            }
-          },
-        });
-
-        bridgeCreated = true;
-
-        // Replay buffered messages into the bridge's own message handler
-        messageBuffer.forEach((buffered) => {
-          ws.emit('message', buffered);
-        });
-        messageBuffer.length = 0;
-
-        // Re-emit the start event so the bridge sees it
-        ws.emit('message', rawData);
-        return;
-      }
-
-      if (!bridgeCreated) {
-        messageBuffer.push(rawData);
-      }
-      // Once bridge is created, messages flow directly via the bridge's own listener
-    } catch (err) {
-      console.error('[WS] Parse error:', err);
+    if (!validateStreamToken(params.get('token'))) {
+      console.warn('[WS] Rejected media-stream connection: bad or missing token');
+      ws.close(1008, 'unauthorized');
+      return;
     }
-  };
 
-  ws.on('message', originalOnMessage);
+    console.log(`[WS] New media stream connection (${direction})`);
 
-  ws.on('close', () => {
-    console.log(`[WS] Connection closed for call ${callSid}`);
-    if (conversationLogger) {
-      conversationLogger.save();
-      conversationLogger = null;
-    }
+    let callSid: string | null = null;
+    let callerNumber: string | null = null;
+    let conversationLogger: ConversationLogger | null = null;
+
+    let bridgeCreated = false;
+    const messageBuffer: RawData[] = [];
+
+    const originalOnMessage = (rawData: RawData) => {
+      try {
+        const msg = JSON.parse(rawData.toString());
+
+        if (msg.event === 'start' && !bridgeCreated) {
+          callSid = msg.start.callSid;
+          callerNumber = msg.start.customParameters?.callerNumber || 'unknown';
+          const personaId = msg.start.customParameters?.persona || personaFromQuery || process.env.DEFAULT_PERSONA || 'tyler';
+          const persona = getPersona(personaId);
+
+          conversationLogger = createConversationLog({
+            direction,
+            scammerNumber: callerNumber as string,
+            ourNumber: process.env.SIGNALWIRE_PHONE_NUMBER,
+            persona: persona.id,
+          });
+
+          console.log(`[WS] Call started: ${callSid} (persona=${persona.id})`);
+
+          createElevenLabsBridge(ws, {
+            callSid: callSid as string,
+            streamSid: msg.start.streamSid,
+            persona,
+            direction,
+            onTranscript: (turn) => {
+              console.log(`[${turn.speaker.toUpperCase()}] ${turn.text}`);
+              if (conversationLogger) conversationLogger.addTurn(turn);
+            },
+            onEnd: () => {
+              if (conversationLogger) {
+                conversationLogger.save();
+                conversationLogger = null;
+              }
+            },
+          });
+
+          bridgeCreated = true;
+
+          messageBuffer.forEach((buffered) => {
+            ws.emit('message', buffered);
+          });
+          messageBuffer.length = 0;
+
+          ws.emit('message', rawData);
+          return;
+        }
+
+        if (!bridgeCreated) {
+          messageBuffer.push(rawData);
+        }
+      } catch (err) {
+        console.error('[WS] Parse error:', err);
+      }
+    };
+
+    ws.on('message', originalOnMessage);
+
+    ws.on('close', () => {
+      console.log(`[WS] Connection closed for call ${callSid}`);
+      if (conversationLogger) {
+        conversationLogger.save();
+        conversationLogger = null;
+      }
+    });
   });
-});
+
+  console.log('[Server] ElevenLabs mode — WebSocket media-stream bridge enabled');
+} else {
+  console.log('[Server] VocalBridge mode — voice handled by VB, WebSocket bridge disabled');
+}
 
 server.listen(PORT, () => {
-  console.log(`\n🎭 Scam Baiter running on port ${PORT}`);
-  console.log(`   Inbound webhook:  POST /inbound`);
+  console.log(`\n🎭 Scam Baiter running on port ${PORT} (voice: ${VOICE_PROVIDER})`);
   console.log(`   Outbound API:     POST /api/call`);
   console.log(`   SMS webhook:      POST /sms`);
-  console.log(`   Media stream WS:  wss://your-host/media-stream\n`);
+  console.log(`   Dashboard:        GET  /dashboard`);
+  if (VOICE_PROVIDER === 'elevenlabs') {
+    console.log(`   Inbound webhook:  POST /inbound`);
+    console.log(`   Media stream WS:  wss://your-host/media-stream`);
+  } else {
+    console.log(`   Inbound calls handled by VocalBridge — configure VB phone numbers`);
+  }
+  console.log('');
 });

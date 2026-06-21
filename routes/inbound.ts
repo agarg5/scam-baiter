@@ -2,14 +2,31 @@ import express, { Request, Response } from 'express';
 import twilio from 'twilio';
 import { streamToken } from '../services/security';
 
+const VOICE_PROVIDER = process.env.VOICE_PROVIDER || 'elevenlabs';
 const router = express.Router();
 
 /**
  * POST /inbound
- * SignalWire webhook for incoming calls. Returns LaML (compatible with TwiML)
- * that connects the call to a Media Stream WebSocket.
+ *
+ * In ElevenLabs mode: SignalWire webhook for incoming calls. Returns LaML that
+ * connects the call to a Media Stream WebSocket.
+ *
+ * In VocalBridge mode: inbound calls are handled entirely by VB (scammer dials
+ * a VB-provisioned number → VB agent answers). This endpoint returns a brief
+ * message explaining that setup, in case the webhook is still pointed here.
  */
 router.post('/', (req: Request, res: Response) => {
+  if (VOICE_PROVIDER === 'vocalbridge') {
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say('This number is now handled by Vocal Bridge. Please update your webhook configuration.');
+    twiml.hangup();
+    console.log(`[Inbound/VB] Received inbound webhook from ${req.body.From} — VB should handle this directly`);
+    res.type('text/xml');
+    res.send(twiml.toString());
+    return;
+  }
+
+  // Legacy ElevenLabs path
   const host = req.headers.host;
   const persona = (req.query.persona as string) || process.env.DEFAULT_PERSONA || 'tyler';
   const twiml = new twilio.twiml.VoiceResponse();

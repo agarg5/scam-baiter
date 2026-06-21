@@ -2,7 +2,7 @@
 
 An open-source voice bot that wastes scammers' time. Pick up a spam call, let the bot handle it, and let the scammer burn minutes talking to "Tyler" or "Margaret" while you get your afternoon back.
 
-Built on **SignalWire** (Twilio-compatible telephony) + **ElevenLabs Conversational AI** (voice agent) + **OpenAI GPT-4o** (SMS replies). Written in **TypeScript** (compiled to `dist/` with `tsc`).
+Supports two voice providers — **Vocal Bridge** (recommended) or the legacy **ElevenLabs + SignalWire** stack. SMS replies powered by **OpenAI GPT-4o**. Written in **TypeScript** (compiled to `dist/` with `tsc`).
 
 - 📞 Inbound and outbound calls
 - 💬 SMS replies (history persisted to disk, survives restarts)
@@ -15,6 +15,24 @@ Built on **SignalWire** (Twilio-compatible telephony) + **ElevenLabs Conversatio
 
 ## Architecture
 
+### Vocal Bridge mode (`VOICE_PROVIDER=vocalbridge`, recommended)
+
+```
+Scammer ──► VB phone number ──► VB agent (persona prompt + voice)
+                                        │
+                                        ▼
+                               transcript + logs
+                                        │
+                                        ▼
+                              Your server (dashboard, SMS)
+```
+
+Outbound: `POST /api/call { phoneNumber, persona }` → VB REST API → VB handles the call end-to-end.
+
+VB manages telephony, STT, TTS, turn-taking, and interruptions. Audio never touches your server.
+
+### ElevenLabs mode (`VOICE_PROVIDER=elevenlabs`, legacy)
+
 ```
 Scammer ──► SignalWire number ──► POST /inbound ──► LaML <Connect><Stream>
                                                             │
@@ -26,7 +44,7 @@ Scammer ──► SignalWire number ──► POST /inbound ──► LaML <Conn
                                                  (persona prompt)
 ```
 
-Outbound reverses it: `POST /api/call { phoneNumber, persona }` → SignalWire dials the number → same WebSocket bridge.
+Outbound: `POST /api/call { phoneNumber, persona }` → SignalWire dials the number → same WebSocket bridge.
 
 ## Quick start
 
@@ -58,13 +76,33 @@ Call your SignalWire number and the default persona (Tyler) will answer.
 
 ## Setup details
 
-### 1. SignalWire
+### Option A: Vocal Bridge (recommended)
+
+1. Sign up at [vocalbridgeai.com](https://vocalbridgeai.com) and create an **account API key** (Dashboard → API Keys) → `VOCAL_BRIDGE_API_KEY`.
+2. **Create one VB agent per persona** in the VB dashboard:
+   - Name it to match your persona (e.g. "Tyler", "Margaret").
+   - Paste the persona's `systemPrompt` as the agent's system prompt.
+   - Pick a voice that matches the character.
+   - (Optional) Enable outbound calling if you want `POST /api/call` to work: `vb config set --outbound-enabled true --accept-outbound-tos`.
+3. Copy each agent's UUID and set the env vars:
+   ```
+   VOCAL_BRIDGE_API_KEY=vb_...
+   VOCALBRIDGE_AGENT_TYLER=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   VOCALBRIDGE_AGENT_MARGARET=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   VOICE_PROVIDER=vocalbridge
+   ```
+4. (Optional) Install the VB CLI for prompt iteration: `pip install vocal-bridge && vb auth login`.
+5. For inbound calls, configure a phone number on VB's dashboard and point it at the appropriate agent. Scammers call the VB number directly.
+
+### Option B: ElevenLabs + SignalWire (legacy)
+
+#### 1. SignalWire
 1. Sign up at [signalwire.com](https://signalwire.com) and note your **Space URL** (e.g. `yourname.signalwire.com`).
 2. Buy a phone number with **Voice + SMS** capability.
 3. In Project Settings → API Tokens, create a token. Copy **Project ID** and **API Token**.
 4. Fill the `SIGNALWIRE_*` values in `.env`.
 
-### 2. ElevenLabs Conversational AI
+#### 2. ElevenLabs Conversational AI
 1. Go to [elevenlabs.io/app/conversational-ai](https://elevenlabs.io/app/conversational-ai) and create an agent.
 2. **LLM**: GPT-4o (or Claude — both work).
 3. **Voice**: pick any default — the per-call persona overrides it (see below). The dashboard voice is just the fallback.
@@ -75,7 +113,10 @@ Call your SignalWire number and the default persona (Tyler) will answer.
 8. Copy the **Agent ID** → `ELEVENLABS_AGENT_ID`.
 9. Create an API key (Profile → API Keys) → `ELEVENLABS_API_KEY`.
 
-### 3. OpenAI
+### SignalWire (required for SMS in both modes, voice in ElevenLabs mode)
+See Option B step 1 above.
+
+### OpenAI
 Get an API key at [platform.openai.com](https://platform.openai.com) → `OPENAI_API_KEY`. Used for SMS replies and the offline simulator.
 
 ### 4. Security (recommended before exposing a tunnel)
@@ -86,7 +127,7 @@ This server is built to sit on a public URL, so every exposed surface can be loc
 |---|---|---|
 | `API_SECRET` | `POST /api/call` (placing calls) — sent as `X-Api-Key` or `Bearer`; the batch dialer sends it automatically | endpoint is open |
 | `SIGNALWIRE_API_TOKEN` | `/inbound`, `/sms`, `/outbound-twiml`, `/call-status` — validates SignalWire's `X-Twilio-Signature` | webhooks unvalidated |
-| `WS_TOKEN` | `wss://…/media-stream` — token baked into the LaML stream URL and checked on connect | any socket accepted |
+| `WS_TOKEN` | `wss://…/media-stream` — token baked into the LaML stream URL and checked on connect (ElevenLabs mode only) | any socket accepted |
 | `DASHBOARD_KEY` | `/dashboard` (`?key=…`); falls back to `API_SECRET` | dashboard is open |
 
 Notes:
@@ -119,7 +160,8 @@ const tyler: Persona = {
   id: 'tyler',                              // URL-safe key used everywhere
   name: 'Tyler Bennett',                    // display name
   description: 'Distractible millennial.',  // one-liner for dashboards / logs
-  voiceId: 'loWZgmt1ZsitHiWYOGDJ',          // ElevenLabs voice id, or null
+  voiceId: 'loWZgmt1ZsitHiWYOGDJ',          // ElevenLabs voice id (legacy), or null
+  // vbAgentId: 'uuid-here',                // VocalBridge agent ID (or set via env)
   systemPrompt: `...`,                      // inbound prompt (they call us)
   outboundPrompt: `...`,                    // outbound prompt (we call them) — usually adds an opener
 };
@@ -127,13 +169,16 @@ const tyler: Persona = {
 export = tyler;   // the loader reads the default export's `id`
 ```
 
-`voiceId` should point at a voice you've added to your ElevenLabs voice library. Match the voice to the character — a twentysomething voice for Tyler, a grandma voice for Margaret. If `voiceId` is `null`, the agent uses whatever voice is configured in the ElevenLabs dashboard.
+- **VocalBridge mode**: the voice is configured on the VB dashboard per agent. `voiceId` is ignored. Map the persona to a VB agent via `vbAgentId` or the `VOCALBRIDGE_AGENT_<ID>` env var.
+- **ElevenLabs mode**: `voiceId` should point at a voice in your ElevenLabs voice library. If `null`, the dashboard default is used.
 
 ### Adding a new persona
 
 1. Copy an existing file: `cp prompts/tyler.ts prompts/sandra.ts`.
 2. Rewrite the prompt for your character — use the structure below. Change the `id` and `export =` variable name.
-3. (Optional) Add a voice: find a voice on [voices.elevenlabs.io](https://voices.elevenlabs.io), add it to your library, paste the voice id into `voiceId`.
+3. Voice setup:
+   - **VocalBridge**: create a new VB agent in the dashboard, set the prompt and voice there, then add the agent UUID as `VOCALBRIDGE_AGENT_SANDRA=...` in `.env`.
+   - **ElevenLabs**: find a voice on [voices.elevenlabs.io](https://voices.elevenlabs.io), add it to your library, paste the voice id into `voiceId`.
 4. Rebuild and restart (`npm run build && npm start`). Verify with `curl http://localhost:8000/api/call/personas`.
 
 That's the whole workflow. No registration, no routes, no config.
@@ -161,11 +206,12 @@ Structure the prompt in clearly-labeled sections — LLMs follow section headers
 
 ### Selecting a persona per call
 
-- **Outbound**: `POST /api/call` body `{ "phoneNumber": "+1...", "persona": "margaret" }`
-- **Inbound**: set the SignalWire voice webhook to `…/inbound?persona=margaret`
-- **SMS**: set the SignalWire SMS webhook to `…/sms?persona=margaret`
-- **Default** for any call without an explicit persona: `DEFAULT_PERSONA=margaret` in `.env`
-- **List** all available: `GET /api/call/personas`
+- **Outbound**: `POST /api/call` body `{ "phoneNumber": "+1...", "persona": "margaret" }` — routes to the VB agent (or SignalWire) for that persona.
+- **Inbound (VB)**: each VB agent has its own phone number — the persona is determined by which number the scammer called.
+- **Inbound (ElevenLabs)**: set the SignalWire voice webhook to `…/inbound?persona=margaret`.
+- **SMS**: set the SignalWire SMS webhook to `…/sms?persona=margaret`.
+- **Default** for any call without an explicit persona: `DEFAULT_PERSONA=margaret` in `.env`.
+- **List** all available: `GET /api/call/personas`.
 
 ## Batch dialing
 
@@ -189,16 +235,17 @@ Flags:
 
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| `POST` | `/inbound` | SignalWire voice webhook (returns LaML) | signature |
-| `POST` | `/sms` | SignalWire SMS webhook | signature |
-| `POST` | `/api/call` | Place an outbound call: `{ phoneNumber, persona? }` | `API_SECRET` |
+| `POST` | `/api/call` | Place an outbound call: `{ phoneNumber, persona? }` — uses VB or SignalWire | `API_SECRET` |
 | `GET`  | `/api/call/personas` | List available personas | none |
+| `GET`  | `/api/call/sync` | Sync VB call logs to local (VB mode only) | `API_SECRET` |
+| `POST` | `/sms` | SignalWire SMS webhook | signature |
 | `GET`  | `/dashboard` | Stats + transcript viewer (HTML) | `DASHBOARD_KEY` (`?key=`) |
-| `POST` | `/outbound-twiml` | Internal — fetched by SignalWire after call connects | signature |
+| `POST` | `/inbound` | SignalWire voice webhook (ElevenLabs mode only) | signature |
+| `POST` | `/outbound-twiml` | Internal — SignalWire call connect (ElevenLabs mode only) | signature |
 | `POST` | `/call-status` | Internal — call status callbacks | signature |
 | `GET`  | `/` | Health check | none |
 
-WebSocket: `wss://HOST/media-stream?direction=inbound|outbound&persona=<id>&token=<WS_TOKEN>`
+ElevenLabs mode only: WebSocket at `wss://HOST/media-stream?direction=inbound|outbound&persona=<id>&token=<WS_TOKEN>`
 
 ## Conversation logs
 
@@ -273,12 +320,12 @@ Compiles, then runs the `node:test` suite (`dist/test/`) — persona loading, ba
 
 ## Deployment
 
-Needs WebSocket support, and a build step (set the build command to `npm install && npm run build`, start command to `npm start`). Known-good:
+Needs a build step (set the build command to `npm install && npm run build`, start command to `npm start`). In VocalBridge mode, WebSocket support is *not* required — the server is a plain HTTP API. Known-good:
 - **Railway** — auto-runs `npm run build` then `npm start`; set env vars
 - **Fly.io** — `fly deploy` (build via the Dockerfile/buildpack, run `npm start`)
-- **Render** — build `npm install && npm run build`, start `npm start`, enable WebSocket in service settings
+- **Render** — build `npm install && npm run build`, start `npm start`; enable WebSocket if using ElevenLabs mode
 
-Remember to update the SignalWire voice/SMS webhooks to the deployed host. Because `dist/` is gitignored, the host must build from source — don't expect a committed `dist/`.
+In VocalBridge mode, inbound calls go directly to VB — no webhooks to configure for voice. Update the SignalWire SMS webhook to your deployed host. Because `dist/` is gitignored, the host must build from source — don't expect a committed `dist/`.
 
 ## Legal & ethical
 
