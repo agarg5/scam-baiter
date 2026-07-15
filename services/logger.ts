@@ -65,4 +65,22 @@ function createConversationLog({
   return { log, addTurn, save };
 }
 
-export { createConversationLog };
+/**
+ * Persist an already-built ConversationLog verbatim, preserving its
+ * duration_seconds, timestamp, and transcript (unlike createConversationLog,
+ * which derives duration from wall-clock time at save).
+ *
+ * The filename is derived deterministically from the log id, so re-writing the
+ * same log (e.g. re-running the VocalBridge sync) overwrites the existing file
+ * instead of creating a duplicate.
+ */
+function writeConversationLog(log: ConversationLog): string {
+  const safeId = String(log.id).replace(/[^a-zA-Z0-9_-]/g, '-');
+  const filename = `vb-${safeId}.json`;
+  const filepath = path.join(LOGS_DIR, filename);
+  fs.writeFileSync(filepath, JSON.stringify(log, null, 2));
+  console.log(`[Logger] Wrote conversation log: ${filename}`);
+  return filepath;
+}
+
+export { createConversationLog, writeConversationLog };

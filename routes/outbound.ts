@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { getPersona, listPersonas } from '../prompts/personas';
 import { requireApiKey } from '../services/security';
-import { createConversationLog } from '../services/logger';
+import { createConversationLog, writeConversationLog } from '../services/logger';
 import * as vocalbridge from '../services/vocalbridge';
 
 const router = express.Router();
@@ -75,15 +75,10 @@ router.get('/sync', requireApiKey, async (req: Request, res: Response) => {
       try {
         const detail = await vocalbridge.getCallTranscript(entry.session_id, chosen);
         const log = vocalbridge.toConversationLog(detail, chosen);
-        const logger = createConversationLog({
-          direction: log.direction,
-          scammerNumber: log.scammerNumber,
-          persona: chosen.id,
-        });
-        for (const turn of log.transcript) {
-          logger.addTurn(turn);
-        }
-        logger.save();
+        // Persist the VB-sourced log verbatim: this keeps VB's real
+        // duration_seconds and writes to a deterministic vb-<session_id>.json
+        // file so repeated syncs are idempotent instead of creating duplicates.
+        writeConversationLog(log);
         synced++;
       } catch (err) {
         console.warn(`[Sync] Skipping session ${entry.session_id}:`, (err as Error).message);
