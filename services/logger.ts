@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import type { ConversationLog, ConversationTurn } from '../types';
 
@@ -75,7 +76,15 @@ function createConversationLog({
  * instead of creating a duplicate.
  */
 function writeConversationLog(log: ConversationLog): string {
-  const safeId = String(log.id).replace(/[^a-zA-Z0-9_-]/g, '-');
+  const rawId = String(log.id);
+  // VB session IDs are UUIDs and pass through verbatim (readable, one file per
+  // session). For anything with characters that aren't filename-safe, fall back
+  // to a hash of the full id — collision-free and free of path-traversal chars —
+  // rather than lossy character replacement, which could map distinct ids to the
+  // same file and silently overwrite a log.
+  const safeId = /^[A-Za-z0-9_-]+$/.test(rawId)
+    ? rawId
+    : crypto.createHash('sha256').update(rawId).digest('hex').slice(0, 32);
   const filename = `vb-${safeId}.json`;
   const filepath = path.join(LOGS_DIR, filename);
   fs.writeFileSync(filepath, JSON.stringify(log, null, 2));
