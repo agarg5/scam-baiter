@@ -3,6 +3,7 @@ import { getPersona, listPersonas } from '../prompts/personas';
 import { requireApiKey } from '../services/security';
 import { createConversationLog, writeConversationLog } from '../services/logger';
 import * as vocalbridge from '../services/vocalbridge';
+import { maskPhone } from '../services/redact';
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.post('/', requireApiKey, async (req: Request, res: Response) => {
     // API and can be synced to the local dashboard with GET /api/call/sync.
     logger.save();
 
-    console.log(`[Outbound] Call to ${phoneNumber} as ${chosen.id}, call_id: ${result.call_id}`);
+    console.log(`[Outbound] Call to ${maskPhone(phoneNumber)} as ${chosen.id}, call_id: ${result.call_id}`);
     res.json({
       success: true,
       callId: result.call_id,

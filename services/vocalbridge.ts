@@ -3,6 +3,31 @@ import type { Persona, ConversationTurn, ConversationLog, Direction } from '../t
 
 const VB_API_KEY = process.env.VOCAL_BRIDGE_API_KEY;
 const VB_API_URL = (process.env.VOCAL_BRIDGE_API_URL || 'https://vocalbridgeai.com').replace(/\/$/, '');
+const VB_TIMEOUT_MS = Number(process.env.VOCAL_BRIDGE_TIMEOUT_MS) || 15000;
+
+/**
+ * fetch wrapper that aborts a request that stalls past VB_TIMEOUT_MS, so a
+ * hung VocalBridge provider fails fast instead of hanging the caller
+ * indefinitely.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = VB_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      throw new Error(`VB request to ${url} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 interface VBCallResult {
   call_id: string;
@@ -79,7 +104,7 @@ async function placeCall(
   const body: Record<string, string> = { phone_number: phoneNumber };
   if (participantName) body.participant_name = participantName;
 
-  const res = await fetch(`${VB_API_URL}/api/v1/calls`, {
+  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/calls`, {
     method: 'POST',
     headers: headers(agentId),
     body: JSON.stringify(body),
@@ -103,7 +128,7 @@ async function generateToken(
 ): Promise<VBTokenResponse> {
   const agentId = resolveAgentId(persona);
 
-  const res = await fetch(`${VB_API_URL}/api/v1/token`, {
+  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/token`, {
     method: 'POST',
     headers: headers(agentId),
     body: JSON.stringify({ participant_name: participantName }),
@@ -130,7 +155,7 @@ async function getCallLogs(
   if (opts.status) params.set('status', String(opts.status));
   const qs = params.toString() ? `?${params}` : '';
 
-  const res = await fetch(`${VB_API_URL}/api/v1/logs${qs}`, {
+  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/logs${qs}`, {
     headers: headers(agentId),
   });
 
@@ -152,7 +177,7 @@ async function getCallTranscript(
 ): Promise<VBLogEntry> {
   const agentId = resolveAgentId(persona);
 
-  const res = await fetch(`${VB_API_URL}/api/v1/logs/${encodeURIComponent(sessionId)}`, {
+  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/logs/${encodeURIComponent(sessionId)}`, {
     headers: headers(agentId),
   });
 

@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import twilio from 'twilio';
+import { maskPhone } from '../services/redact';
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ router.post('/', (req: Request, res: Response) => {
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say('This number is now handled by Vocal Bridge. Please update your webhook configuration.');
   twiml.hangup();
-  console.log(`[Inbound] Received legacy webhook from ${req.body.From} — inbound calls should go to VB directly`);
+  console.log(`[Inbound] Received legacy webhook from ${maskPhone(req.body.From)} — inbound calls should go to VB directly`);
   res.type('text/xml');
   res.send(twiml.toString());
 });
