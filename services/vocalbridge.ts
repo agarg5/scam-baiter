@@ -133,9 +133,9 @@ async function placeCall(
  */
 async function getCallLogs(
   persona: Persona,
-  opts: { limit?: number; status?: string } = {}
+  opts: { limit?: number; status?: string; direction?: Direction } = {}
 ): Promise<VBLogEntry[]> {
-  const agentId = resolveAgentId(persona);
+  const agentId = resolveAgentId(persona, opts.direction);
   const params = new URLSearchParams();
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.status) params.set('status', String(opts.status));
@@ -150,9 +150,10 @@ async function getCallLogs(
  */
 async function getCallTranscript(
   sessionId: string,
-  persona: Persona
+  persona: Persona,
+  direction?: Direction
 ): Promise<VBLogEntry> {
-  const agentId = resolveAgentId(persona);
+  const agentId = resolveAgentId(persona, direction);
   return vbRequest<VBLogEntry>(
     `/api/v1/logs/${encodeURIComponent(sessionId)}`,
     agentId,
@@ -162,13 +163,18 @@ async function getCallTranscript(
 }
 
 /**
- * VB transcript timestamps arrive as bare numbers with no documented unit.
- * Values below 1e12 can only be epoch seconds (1e12 ms is 2001, and no VB call
- * predates the service), so scale them; larger values are already ms.
+ * VB transcript timestamps arrive as bare numbers with no documented unit or
+ * epoch. Disambiguate by magnitude: values ≥1e12 can only be epoch ms, values
+ * in [1e9, 1e12) epoch seconds, and anything smaller (including 0) is treated
+ * as seconds since call start.
  */
-function turnTimestamp(ts?: number): string {
-  if (typeof ts !== 'number' || !Number.isFinite(ts)) return new Date().toISOString();
-  return new Date(ts < 1e12 ? ts * 1000 : ts).toISOString();
+function turnTimestamp(ts: number | undefined, callStartMs: number): string {
+  if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < 0) {
+    return new Date(callStartMs).toISOString();
+  }
+  if (ts >= 1e12) return new Date(ts).toISOString();
+  if (ts >= 1e9) return new Date(ts * 1000).toISOString();
+  return new Date(callStartMs + ts * 1000).toISOString();
 }
 
 /**
@@ -180,10 +186,11 @@ function toConversationLog(
   persona: Persona,
   direction: Direction = 'outbound'
 ): ConversationLog {
+  const callStartMs = Date.parse(entry.created_at) || Date.now();
   const transcript: ConversationTurn[] = (entry.transcript || []).map((t) => ({
     speaker: t.role === 'user' ? 'scammer' : 'agent',
     text: t.text,
-    timestamp: turnTimestamp(t.timestamp),
+    timestamp: turnTimestamp(t.timestamp, callStartMs),
   }));
 
   return {

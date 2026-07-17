@@ -66,11 +66,10 @@ npm start               # runs dist/server.js
 
 ### 2. SignalWire (SMS)
 
-1. Sign up at [signalwire.com](https://signalwire.com) and note your **Space URL** (e.g. `yourname.signalwire.com`).
+1. Sign up at [signalwire.com](https://signalwire.com).
 2. Buy a phone number with **SMS** capability.
-3. In Project Settings → API Tokens, create a token. Copy **Project ID** and **API Token**.
-4. Fill the `SIGNALWIRE_*` values in `.env`.
-5. Point the **SMS webhook** to `https://YOUR-HOST/sms`.
+3. In Project Settings → API Tokens, create a token → `SIGNALWIRE_API_TOKEN` in `.env` (used to validate webhook signatures; replies go out as TwiML responses, so no other credentials are needed).
+4. Point the **SMS webhook** to `https://YOUR-HOST/sms`.
 
 ### 3. OpenAI
 
@@ -82,7 +81,7 @@ This server is built to sit on a public URL, so every exposed surface can be loc
 
 | Var | Protects | If unset |
 |---|---|---|
-| `API_SECRET` | `POST /api/call` (placing calls) — sent as `X-Api-Key` or `Bearer`; the batch dialer sends it automatically | endpoint is open |
+| `API_SECRET` | `POST /api/call` and `GET /api/call/sync` — sent as `X-Api-Key` or `Bearer` | endpoint is open |
 | `SIGNALWIRE_API_TOKEN` | `/sms`, `/call-status` — validates SignalWire's `X-Twilio-Signature` | webhooks unvalidated |
 | `DASHBOARD_KEY` | `/dashboard` (`?key=…`); falls back to `API_SECRET` | dashboard is open |
 

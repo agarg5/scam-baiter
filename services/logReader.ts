@@ -53,6 +53,18 @@ function computeStats(convos: StoredConversation[]): DashboardStats {
   };
 
   for (const c of convos) {
+    // Sessions that never connected (failed/no-answer: a non-completed status,
+    // no transcript, no duration) wasted nobody's time — keep them out of the
+    // headline numbers so a batch of unanswered dials doesn't inflate counts.
+    const neverConnected =
+      c.status && c.status !== 'completed' &&
+      !(c.transcript && c.transcript.length) &&
+      !Number(c.duration_seconds);
+    if (neverConnected) {
+      stats.totalCalls -= 1;
+      continue;
+    }
+
     const secs = Number(c.duration_seconds) || 0;
     stats.totalSeconds += secs;
 

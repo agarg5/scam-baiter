@@ -53,16 +53,18 @@ router.post('/', requireApiKey, async (req: Request, res: Response) => {
 
 /** Sync one persona's VB sessions to local logs; returns how many were written. */
 async function syncPersona(persona: Persona, limit: number, direction: Direction): Promise<{ synced: number; total: number }> {
-  const logs = await vocalbridge.getCallLogs(persona, { limit });
+  // direction also selects the agent: with a VOCALBRIDGE_AGENT_<ID>_OUTBOUND
+  // mapping, ?direction=outbound syncs the outbound agent's sessions.
+  const logs = await vocalbridge.getCallLogs(persona, { limit, direction });
 
   const results = await Promise.all(
     logs.map(async (entry) => {
       try {
         // The list endpoint sometimes includes the transcript already; only
-        // fetch the per-session detail when it doesn't.
-        const detail = entry.transcript
+        // fetch the per-session detail when it's absent or empty.
+        const detail = entry.transcript?.length
           ? entry
-          : await vocalbridge.getCallTranscript(entry.session_id, persona);
+          : await vocalbridge.getCallTranscript(entry.session_id, persona, direction);
         // Persist the VB-sourced log verbatim: this keeps VB's real
         // duration_seconds and writes to a deterministic vb-<session_id>.json
         // file so repeated syncs are idempotent instead of creating duplicates.
@@ -89,21 +91,29 @@ async function syncPersona(persona: Persona, limit: number, direction: Direction
 router.get('/sync', requireApiKey, async (req: Request, res: Response) => {
   const limit = Number(req.query.limit) || 20;
   const direction: Direction = req.query.direction === 'outbound' ? 'outbound' : 'inbound';
-  const personas = req.query.persona
-    ? [getPersona(req.query.persona as string)]
-    : listPersonas().map((p) => getPersona(p.id));
+
+  // getPersona silently falls back to the default for unknown ids, which
+  // would make a typo look like a successful sync — reject it instead.
+  const requested = req.query.persona as string | undefined;
+  const known = listPersonas().map((p) => p.id);
+  if (requested && !known.includes(requested)) {
+    return res.status(400).json({ error: `Unknown persona "${requested}". Known: ${known.join(', ')}` });
+  }
+  const personas = requested ? [getPersona(requested)] : known.map((id) => getPersona(id));
 
   try {
     const perPersona: Record<string, { synced: number; total: number }> = {};
-    for (const persona of personas) {
-      try {
-        perPersona[persona.id] = await syncPersona(persona, limit, direction);
-      } catch (err) {
-        // One persona without a VB agent mapping shouldn't sink the others.
-        console.warn(`[Sync] Persona ${persona.id} failed:`, (err as Error).message);
-        perPersona[persona.id] = { synced: 0, total: 0 };
-      }
-    }
+    await Promise.all(
+      personas.map(async (persona) => {
+        try {
+          perPersona[persona.id] = await syncPersona(persona, limit, direction);
+        } catch (err) {
+          // One persona without a VB agent mapping shouldn't sink the others.
+          console.warn(`[Sync] Persona ${persona.id} failed:`, (err as Error).message);
+          perPersona[persona.id] = { synced: 0, total: 0 };
+        }
+      })
+    );
 
     const synced = Object.values(perPersona).reduce((n, r) => n + r.synced, 0);
     const total = Object.values(perPersona).reduce((n, r) => n + r.total, 0);
