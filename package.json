@@ -8,8 +8,6 @@
     "start": "node dist/server.js",
     "dev": "tsc --watch & node --watch dist/server.js",
     "typecheck": "tsc --noEmit",
-    "batch": "node dist/scripts/batch-call.js",
-    "prebatch": "tsc",
     "sim": "node dist/scripts/sim.js",
     "presim": "tsc",
     "test": "node --test \"dist/test/**/*.test.js\"",

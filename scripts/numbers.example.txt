@@ -1,7 +1,0 @@
-# One phone number per line, E.164 format.
-# Optionally append a persona id after the number.
-# Lines starting with # and blank lines are ignored.
-
-+14155551234
-+18005550199   margaret
-+12125550111   tyler

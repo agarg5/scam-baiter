@@ -7,7 +7,6 @@ Voice calls powered by **VocalBridge**, SMS replies powered by **OpenAI GPT-4o**
 - 📞 Inbound and outbound calls
 - 💬 SMS replies (history persisted to disk, survives restarts)
 - 🎭 Pluggable personas — drop a `.ts` file into `prompts/` and it's live
-- 📋 Batch dialer — feed it a list of numbers
 - 📝 Full transcripts saved per call
 - 📊 Dashboard — total time wasted, per-persona stats, browsable transcripts
 - 🔬 Offline simulator + grader — pressure-test a persona without live calls
@@ -163,25 +162,6 @@ Structure the prompt in clearly-labeled sections — LLMs follow section headers
 - **Default** for any call without an explicit persona: `DEFAULT_PERSONA=margaret` in `.env`.
 - **List** all available: `GET /api/call/personas`.
 
-## Batch dialing
-
-Feed the bot a list of numbers:
-
-```bash
-# scripts/numbers.txt (one per line, optional persona override)
-+14155551234
-+18005550199   margaret
-
-# then run:
-npm run batch -- scripts/numbers.txt --persona tyler --delay 30
-```
-
-Calls go directly through VocalBridge's REST API — the server does not need to be running.
-
-Flags:
-- `--persona` — default persona for lines without one (fallback: `DEFAULT_PERSONA` env)
-- `--delay` — seconds between calls (default 30)
-
 ## API reference
 
 | Method | Path | Purpose | Auth |
@@ -264,7 +244,7 @@ Layout mirrors the runtime: `server.ts`, `routes/`, `services/`, `prompts/`, `sc
 npm test
 ```
 
-Compiles, then runs the `node:test` suite (`dist/test/`) — persona loading, batch-list parsing, the persisted SMS store, and the auth guards. No network or credentials required.
+Compiles, then runs the `node:test` suite (`dist/test/`) — persona loading, the persisted SMS store, VocalBridge helpers, and the auth guards. No network or credentials required.
 
 ## Deployment
 
