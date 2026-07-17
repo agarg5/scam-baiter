@@ -13,7 +13,6 @@ import type { Request, Response, NextFunction } from 'express';
  */
 
 const API_SECRET = process.env.API_SECRET;
-const WS_TOKEN = process.env.WS_TOKEN;
 const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
 const SKIP_SIGNATURE_VALIDATION = process.env.SKIP_SIGNATURE_VALIDATION === 'true';
 
@@ -70,8 +69,8 @@ function publicUrl(req: Request): string {
 
 /**
  * Express middleware: verify the X-Twilio-Signature header SignalWire sends on
- * every webhook (voice, SMS, status). This stops anyone from POSTing forged
- * webhooks to burn your OpenAI/ElevenLabs credits or trigger calls.
+ * every webhook (SMS, status). This stops anyone from POSTing forged
+ * webhooks to burn your OpenAI credits or trigger actions.
  *
  * Requires SIGNALWIRE_API_TOKEN (the signing key). Set SKIP_SIGNATURE_VALIDATION=true
  * to bypass for local testing without a real provider.
@@ -111,31 +110,9 @@ function requireDashboardKey(req: Request, res: Response, next: NextFunction): v
   res.status(401).type('text/plain').send('unauthorized — append ?key=YOUR_KEY');
 }
 
-/**
- * Generate the token appended to the media-stream WebSocket URL in LaML and
- * checked when the socket connects. Falls back to '' when WS_TOKEN is unset.
- */
-function streamToken(): string {
-  return WS_TOKEN || '';
-}
-
-/**
- * Validate the token on an incoming media-stream WebSocket upgrade. Returns
- * true if the connection should be allowed.
- */
-function validateStreamToken(token: string | null | undefined): boolean {
-  if (!WS_TOKEN) {
-    warnOnce('ws-token', '[security] WS_TOKEN not set — /media-stream accepts any connection.');
-    return true;
-  }
-  return Boolean(token) && safeEqual(token as string, WS_TOKEN);
-}
-
 export {
   requireApiKey,
   requireDashboardKey,
   validateSignalWireSignature,
-  streamToken,
-  validateStreamToken,
   safeEqual,
 };

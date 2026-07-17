@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
-import type { ConversationLog, ConversationTurn } from '../types';
+import crypto from 'crypto';
+import type { ConversationLog } from '../types';
 
 const LOGS_DIR = path.join(__dirname, '..', '..', 'logs', 'conversations');
 
@@ -10,59 +10,42 @@ if (!fs.existsSync(LOGS_DIR)) {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
 }
 
-export interface ConversationLogger {
-  log: ConversationLog;
-  addTurn(turn: ConversationTurn): void;
-  save(): string;
-}
-
-interface CreateLogOptions {
-  direction: string;
-  scammerNumber: string;
-  ourNumber?: string;
-  persona?: string;
-}
-
 /**
- * Creates a new conversation log entry and returns a logger object.
+ * Persist an already-built ConversationLog verbatim, preserving its
+ * duration_seconds, timestamp, and transcript.
+ *
+ * The filename is derived deterministically from the log id, so re-writing the
+ * same log (e.g. re-running the VocalBridge sync) overwrites the existing file
+ * instead of creating a duplicate. One exception: `direction` is not stored by
+ * the provider — it's a label the operator supplies at sync time — so if the
+ * file already exists its original direction wins, otherwise a later sync run
+ * with a different ?direction= would silently relabel every prior call.
  */
-function createConversationLog({
-  direction,
-  scammerNumber,
-  ourNumber,
-  persona = 'margaret',
-}: CreateLogOptions): ConversationLogger {
-  const id = uuidv4();
-  const startTime = new Date();
-  const transcript: ConversationTurn[] = [];
+async function writeConversationLog(log: ConversationLog): Promise<string> {
+  const rawId = String(log.id);
+  // VB session IDs are UUIDs and pass through verbatim (readable, one file per
+  // session). For anything with characters that aren't filename-safe, fall back
+  // to a hash of the full id — collision-free and free of path-traversal chars —
+  // rather than lossy character replacement, which could map distinct ids to the
+  // same file and silently overwrite a log.
+  const safeId = /^[A-Za-z0-9_-]+$/.test(rawId)
+    ? rawId
+    : crypto.createHash('sha256').update(rawId).digest('hex').slice(0, 32);
+  const filename = `vb-${safeId}.json`;
+  const filepath = path.join(LOGS_DIR, filename);
 
-  const log: ConversationLog = {
-    id,
-    timestamp: startTime.toISOString(),
-    direction,
-    scammerNumber,
-    ourNumber,
-    duration_seconds: 0,
-    transcript,
-    persona,
-  };
-
-  function addTurn({ speaker, text, timestamp }: ConversationTurn): void {
-    transcript.push({ speaker, text, timestamp: timestamp || new Date().toISOString() });
+  let toWrite = log;
+  try {
+    const existing = JSON.parse(await fs.promises.readFile(filepath, 'utf8')) as ConversationLog;
+    if (existing.direction) toWrite = { ...log, direction: existing.direction };
+  } catch {
+    // No existing file (or unreadable) — write as-is.
   }
 
-  function save(): string {
-    const endTime = new Date();
-    log.duration_seconds = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
-
-    const filename = `${startTime.toISOString().replace(/[:.]/g, '-')}_${id.slice(0, 8)}.json`;
-    const filepath = path.join(LOGS_DIR, filename);
-    fs.writeFileSync(filepath, JSON.stringify(log, null, 2));
-    console.log(`[Logger] Saved conversation log: ${filename}`);
-    return filepath;
-  }
-
-  return { log, addTurn, save };
+  // async so a multi-session sync doesn't block the event loop per file
+  await fs.promises.writeFile(filepath, JSON.stringify(toWrite, null, 2));
+  console.log(`[Logger] Wrote conversation log: ${filename}`);
+  return filepath;
 }
 
-export { createConversationLog };
+export { writeConversationLog };

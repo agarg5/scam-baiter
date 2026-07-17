@@ -1,33 +1,22 @@
 import express, { Request, Response } from 'express';
 import twilio from 'twilio';
-import { streamToken } from '../services/security';
+import { maskPhone } from '../services/redact';
 
 const router = express.Router();
 
 /**
  * POST /inbound
- * SignalWire webhook for incoming calls. Returns LaML (compatible with TwiML)
- * that connects the call to a Media Stream WebSocket.
+ *
+ * Inbound voice calls are handled entirely by VocalBridge — each persona's VB
+ * agent has its own phone number. If a SignalWire webhook is still pointed
+ * here by accident, hang up silently: the caller is likely a scammer dialing
+ * the old number, and announcing the tooling would blow the persona. The log
+ * line below is the operator's signal that a webhook still points here.
  */
 router.post('/', (req: Request, res: Response) => {
-  const host = req.headers.host;
-  const persona = (req.query.persona as string) || process.env.DEFAULT_PERSONA || 'tyler';
   const twiml = new twilio.twiml.VoiceResponse();
-
-  twiml.pause({ length: 1 });
-
-  const token = streamToken();
-  const tokenQs = token ? `&token=${encodeURIComponent(token)}` : '';
-
-  const connect = twiml.connect();
-  const stream = connect.stream({
-    url: `wss://${host}/media-stream?persona=${encodeURIComponent(persona)}${tokenQs}`,
-    name: 'scam-baiter-stream',
-  });
-  stream.parameter({ name: 'persona', value: persona });
-
-  console.log(`[Inbound] Call from ${req.body.From} (persona=${persona}) — connecting to ElevenLabs`);
-
+  twiml.hangup();
+  console.log(`[Inbound] Received legacy webhook from ${maskPhone(req.body.From)} — inbound calls should go to VB directly`);
   res.type('text/xml');
   res.send(twiml.toString());
 });

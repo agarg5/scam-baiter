@@ -3,7 +3,7 @@
  * Batch dialer — calls every number in a list, spaced by a delay.
  *
  * Usage:
- *   node dist/scripts/batch-call.js <path-to-list> [--persona tyler] [--delay 30] [--host https://foo.ngrok.io]
+ *   node dist/scripts/batch-call.js <path-to-list> [--persona tyler] [--delay 30]
  *
  * List file format: one number per line. Blank lines and lines starting with
  * `#` are ignored. A line can optionally override the persona like:
@@ -12,12 +12,15 @@
  *   +18005550199   margaret   # trailing comment
  *   # this is a comment
  *
- * The script POSTs to the running server's /api/call endpoint, so the server
- * must be up and publicly reachable (cloudflared / ngrok / deployed).
+ * Calls go directly through VocalBridge's REST API — the server does not need
+ * to be running.
  */
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
+import { placeCall } from '../services/vocalbridge';
+import { getPersona } from '../prompts/personas';
+import { maskPhone } from '../services/redact';
 
 export interface CallEntry {
   phoneNumber: string;
@@ -37,7 +40,7 @@ function parseList(file: string, defaultPersona = 'tyler'): CallEntry[] {
     if (!line) continue;
     const [number, persona] = line.split(/\s+/);
     if (!/^\+?\d{7,15}$/.test(number)) {
-      console.warn(`[batch] Skipping invalid number: "${number}"`);
+      console.warn(`[batch] Skipping invalid number: "${maskPhone(number)}"`);
       continue;
     }
     entries.push({ phoneNumber: number.startsWith('+') ? number : `+${number}`, persona: persona || defaultPersona });
@@ -45,27 +48,12 @@ function parseList(file: string, defaultPersona = 'tyler'): CallEntry[] {
   return entries;
 }
 
-async function placeCall(host: string, { phoneNumber, persona }: CallEntry): Promise<any> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (process.env.API_SECRET) headers['X-Api-Key'] = process.env.API_SECRET;
-
-  const res = await fetch(`${host}/api/call`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ phoneNumber, persona }),
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
-}
-
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0 || args[0].startsWith('--')) {
-    console.error('Usage: node dist/scripts/batch-call.js <list-file> [--persona X] [--delay N] [--host URL]');
+    console.error('Usage: node dist/scripts/batch-call.js <list-file> [--persona X] [--delay N]');
     process.exit(1);
   }
 
@@ -79,18 +67,17 @@ async function main(): Promise<void> {
 
   const defaultPersona = flags.persona || process.env.DEFAULT_PERSONA || 'tyler';
   const delaySec = parseInt(flags.delay || '30', 10);
-  const host = flags.host || process.env.PUBLIC_HOST || `http://localhost:${process.env.PORT || 8000}`;
 
   const entries = parseList(listPath, defaultPersona);
   console.log(`[batch] Loaded ${entries.length} numbers from ${listPath}`);
-  console.log(`[batch] Host: ${host}  Delay: ${delaySec}s  Default persona: ${defaultPersona}`);
+  console.log(`[batch] Delay: ${delaySec}s  Default persona: ${defaultPersona}`);
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    console.log(`\n[batch] (${i + 1}/${entries.length}) → ${entry.phoneNumber} as ${entry.persona}`);
+    console.log(`\n[batch] (${i + 1}/${entries.length}) → ${maskPhone(entry.phoneNumber)} as ${entry.persona}`);
     try {
-      const r = await placeCall(host, entry);
-      console.log(`[batch]   OK callSid=${r.callSid}`);
+      const r = await placeCall(entry.phoneNumber, getPersona(entry.persona));
+      console.log(`[batch]   OK call_id=${r.call_id} status=${r.status}`);
     } catch (err) {
       console.error(`[batch]   FAIL: ${(err as Error).message}`);
     }
@@ -102,7 +89,7 @@ async function main(): Promise<void> {
   console.log('\n[batch] Done.');
 }
 
-export { parseList, placeCall };
+export { parseList };
 
 if (require.main === module) {
   main();

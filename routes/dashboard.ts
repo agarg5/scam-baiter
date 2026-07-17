@@ -73,7 +73,7 @@ router.get('/', requireDashboardKey, (req: Request, res: Response) => {
 
   const convoBlocks = convos.map((c) => `
     <details>
-      <summary>${esc(c.persona || 'unknown')} — ${esc(c.scammerNumber || 'unknown')} — ${fmtDuration(c.duration_seconds)} <span class="muted">(${esc(c.direction || '')}, ${esc((c.timestamp || '').slice(0, 16).replace('T', ' '))})</span></summary>
+      <summary>${esc(c.persona || 'unknown')} — ${esc(c.scammerNumber || 'unknown')} — ${fmtDuration(c.duration_seconds)} <span class="muted">(${esc(c.direction || '')}${c.status && c.status !== 'completed' ? `, ${esc(c.status)}` : ''}, ${esc((c.timestamp || '').slice(0, 16).replace('T', ' '))})</span></summary>
       <div class="meta">${(c.transcript || []).length} turns · log: ${esc(c.file || '')}</div>
       ${renderTranscript(c.transcript)}
     </details>

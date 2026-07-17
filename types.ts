@@ -8,8 +8,11 @@ export interface Persona {
   name: string;
   /** One-liner for dashboards / logs. */
   description: string;
-  /** ElevenLabs voice id, or null to use the dashboard default. */
-  voiceId: string | null;
+  /**
+   * Vocal Bridge agent UUID that runs this persona's voice calls.
+   * Can also be set via the VOCALBRIDGE_AGENT_<ID> env var.
+   */
+  vbAgentId?: string;
   /** Inbound prompt (they call us). */
   systemPrompt: string;
   /** Outbound prompt (we call them) — usually adds an opener. */
@@ -17,7 +20,7 @@ export interface Persona {
 }
 
 /** The dashboard-facing subset of a persona (no prompt bodies). */
-export type PersonaSummary = Pick<Persona, 'id' | 'name' | 'description' | 'voiceId'>;
+export type PersonaSummary = Pick<Persona, 'id' | 'name' | 'description'>;
 
 export type Speaker = 'scammer' | 'agent';
 
@@ -34,6 +37,8 @@ export interface ConversationLog {
   scammerNumber: string;
   ourNumber?: string;
   duration_seconds: number;
+  /** Provider call status (e.g. 'completed', 'failed'), when known. */
+  status?: string;
   transcript: ConversationTurn[];
   persona: string;
 }

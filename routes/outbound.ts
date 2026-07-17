@@ -1,8 +1,10 @@
 import express, { Request, Response } from 'express';
-import twilio from 'twilio';
-import { client } from '../services/client';
 import { getPersona, listPersonas } from '../prompts/personas';
-import { requireApiKey, streamToken } from '../services/security';
+import { requireApiKey } from '../services/security';
+import { writeConversationLog } from '../services/logger';
+import * as vocalbridge from '../services/vocalbridge';
+import { maskPhone } from '../services/redact';
+import type { Direction, Persona } from '../types';
 
 const router = express.Router();
 
@@ -18,8 +20,10 @@ router.get('/personas', (_req: Request, res: Response) => {
  * POST /api/call
  * Body: { phoneNumber: "+1234567890", persona: "tyler" (optional) }
  *
- * Initiates a SignalWire outbound call to the given number, then connects it
- * to ElevenLabs via the same media-stream WebSocket bridge.
+ * Places an outbound call through VocalBridge. The VB agent identified by the
+ * persona's agent mapping handles the full conversation. No local log is
+ * written here — the transcript lives in VB and reaches the dashboard via
+ * GET /api/call/sync, keyed by VB's session id.
  */
 router.post('/', requireApiKey, async (req: Request, res: Response) => {
   const { phoneNumber, persona } = req.body as { phoneNumber?: string; persona?: string };
@@ -29,50 +33,98 @@ router.post('/', requireApiKey, async (req: Request, res: Response) => {
   }
 
   const chosen = getPersona(persona);
-  const host = req.headers.host;
 
   try {
-    const call = await client.calls.create({
-      to: phoneNumber,
-      from: process.env.SIGNALWIRE_PHONE_NUMBER,
-      url: `https://${host}/outbound-twiml?persona=${encodeURIComponent(chosen.id)}`,
-      statusCallback: `https://${host}/call-status`,
-      statusCallbackMethod: 'POST',
-    });
+    const result = await vocalbridge.placeCall(phoneNumber, chosen);
 
-    console.log(`[Outbound] Initiated call to ${phoneNumber} as ${chosen.id}, SID: ${call.sid}`);
-    res.json({ success: true, callSid: call.sid, to: phoneNumber, persona: chosen.id });
+    console.log(`[Outbound] Call to ${maskPhone(phoneNumber)} as ${chosen.id}, call_id: ${result.call_id}`);
+    res.json({
+      success: true,
+      callId: result.call_id,
+      to: phoneNumber,
+      persona: chosen.id,
+      status: result.status,
+    });
   } catch (err) {
     console.error('[Outbound] Failed to initiate call:', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
+/** Sync one persona's VB sessions to local logs; returns how many were written. */
+async function syncPersona(persona: Persona, limit: number, direction: Direction): Promise<{ synced: number; total: number }> {
+  // direction also selects the agent: with a VOCALBRIDGE_AGENT_<ID>_OUTBOUND
+  // mapping, ?direction=outbound syncs the outbound agent's sessions.
+  const logs = await vocalbridge.getCallLogs(persona, { limit, direction });
+
+  const results = await Promise.all(
+    logs.map(async (entry) => {
+      try {
+        // The list endpoint sometimes includes the transcript already; only
+        // fetch the per-session detail when it's absent or empty.
+        const detail = entry.transcript?.length
+          ? entry
+          : await vocalbridge.getCallTranscript(entry.session_id, persona, direction);
+        // Persist the VB-sourced log verbatim: this keeps VB's real
+        // duration_seconds and writes to a deterministic vb-<session_id>.json
+        // file so repeated syncs are idempotent instead of creating duplicates.
+        await writeConversationLog(vocalbridge.toConversationLog(detail, persona, direction));
+        return true;
+      } catch (err) {
+        console.warn(`[Sync] Skipping session ${entry.session_id}:`, (err as Error).message);
+        return false;
+      }
+    })
+  );
+
+  return { synced: results.filter(Boolean).length, total: logs.length };
+}
+
 /**
- * POST /outbound-twiml
- * Fetched by SignalWire once the outbound call connects. Returns LaML to start
- * a Media Stream, with the persona id attached as a custom stream parameter so
- * the WebSocket handler knows which persona to log.
+ * GET /api/call/sync
+ * Sync call logs from VocalBridge into the local logs directory so the
+ * dashboard can display them. Syncs every persona's agent unless ?persona=
+ * narrows it to one. VB's log entries don't say which side initiated the
+ * call, so pass ?direction=inbound|outbound to label the batch (defaults to
+ * inbound — scammers calling the published numbers is the primary flow).
  */
-router.post('/twiml', (req: Request, res: Response) => {
-  const host = req.headers.host;
-  const persona = (req.query.persona as string) || 'tyler';
-  const twiml = new twilio.twiml.VoiceResponse();
+router.get('/sync', requireApiKey, async (req: Request, res: Response) => {
+  const limit = Number(req.query.limit) || 20;
+  const direction: Direction = req.query.direction === 'outbound' ? 'outbound' : 'inbound';
 
-  const token = streamToken();
-  const tokenQs = token ? `&token=${encodeURIComponent(token)}` : '';
+  // getPersona silently falls back to the default for unknown ids, which
+  // would make a typo look like a successful sync — reject it instead.
+  const requested = req.query.persona as string | undefined;
+  const known = listPersonas().map((p) => p.id);
+  if (requested && !known.includes(requested)) {
+    return res.status(400).json({ error: `Unknown persona "${requested}". Known: ${known.join(', ')}` });
+  }
+  const personas = requested ? [getPersona(requested)] : known.map((id) => getPersona(id));
 
-  const connect = twiml.connect();
-  const stream = connect.stream({
-    url: `wss://${host}/media-stream?direction=outbound&persona=${encodeURIComponent(persona)}${tokenQs}`,
-    name: 'scam-baiter-outbound-stream',
-  });
-  stream.parameter({ name: 'persona', value: persona });
+  try {
+    const perPersona: Record<string, { synced: number; total: number }> = {};
+    // Personas sync one at a time: two personas can resolve to the same VB
+    // agent (shared VOCALBRIDGE_DEFAULT_AGENT_ID), and running them
+    // concurrently would race writeConversationLog's read-modify-write on the
+    // same vb-<session_id>.json. Per-session fetches inside syncPersona are
+    // already parallel, which is where the time goes.
+    for (const persona of personas) {
+      try {
+        perPersona[persona.id] = await syncPersona(persona, limit, direction);
+      } catch (err) {
+        // One persona without a VB agent mapping shouldn't sink the others.
+        console.warn(`[Sync] Persona ${persona.id} failed:`, (err as Error).message);
+        perPersona[persona.id] = { synced: 0, total: 0 };
+      }
+    }
 
-  console.log(`[Outbound] LaML delivered (persona=${persona})`);
-
-  res.type('text/xml');
-  res.send(twiml.toString());
+    const synced = Object.values(perPersona).reduce((n, r) => n + r.synced, 0);
+    const total = Object.values(perPersona).reduce((n, r) => n + r.total, 0);
+    res.json({ synced, total, direction, personas: perPersona });
+  } catch (err) {
+    console.error('[Sync] Failed:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 export = router;
