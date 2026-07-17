@@ -2,15 +2,14 @@
 
 An open-source voice bot that wastes scammers' time. Pick up a spam call, let the bot handle it, and let the scammer burn minutes talking to "Tyler" or "Margaret" while you get your afternoon back.
 
-Voice calls powered by **VocalBridge**, SMS replies powered by **OpenAI GPT-4o**. Written in **TypeScript** (compiled to `dist/` with `tsc`).
+Voice calls powered by **VocalBridge**; personas pressure-tested offline with **OpenAI GPT-4o**. Written in **TypeScript** (compiled to `dist/` with `tsc`).
 
 - 📞 Inbound and outbound calls
-- 💬 SMS replies (history persisted to disk, survives restarts)
 - 🎭 Pluggable personas — drop a `.ts` file into `prompts/` and it's live
 - 📝 Full transcripts saved per call
 - 📊 Dashboard — total time wasted, per-persona stats, browsable transcripts
 - 🔬 Offline simulator + grader — pressure-test a persona without live calls
-- 🔒 Auth on every exposed endpoint (API key, webhook signatures)
+- 🔒 Auth on every exposed endpoint (API key)
 
 ## Architecture
 
@@ -21,7 +20,7 @@ Scammer ──► VB phone number ──► VB agent (persona prompt + voice)
                                transcript + logs
                                         │
                                         ▼
-                              Your server (dashboard, SMS)
+                              Your server (dashboard)
 ```
 
 Outbound: `POST /api/call { phoneNumber, persona }` → VB REST API → VB handles the call end-to-end.
@@ -63,30 +62,20 @@ npm start               # runs dist/server.js
 4. (Optional) Install the VB CLI for prompt iteration: `pip install vocal-bridge && vb auth login`.
 5. For inbound calls, configure a phone number on VB's dashboard and point it at the appropriate agent. Scammers call the VB number directly.
 
-### 2. SignalWire (SMS)
+### 2. OpenAI
 
-1. Sign up at [signalwire.com](https://signalwire.com).
-2. Buy a phone number with **SMS** capability.
-3. In Project Settings → API Tokens, create a token → `SIGNALWIRE_API_TOKEN` in `.env` (used to validate webhook signatures; replies go out as TwiML responses, so no other credentials are needed).
-4. Point the **SMS webhook** to `https://YOUR-HOST/sms`.
+Get an API key at [platform.openai.com](https://platform.openai.com) → `OPENAI_API_KEY`. Used by the offline persona simulator (`npm run sim`).
 
-### 3. OpenAI
-
-Get an API key at [platform.openai.com](https://platform.openai.com) → `OPENAI_API_KEY`. Used for SMS replies and the offline simulator.
-
-### 4. Security (recommended before exposing a tunnel)
+### 3. Security (recommended before exposing a tunnel)
 
 This server is built to sit on a public URL, so every exposed surface can be locked down with an environment variable. Each guard is **secure when configured, loud when not**: set the secret and it's enforced; leave it unset and the server boots but prints a warning that the surface is open. Set these in `.env`:
 
 | Var | Protects | If unset |
 |---|---|---|
 | `API_SECRET` | `POST /api/call` and `GET /api/call/sync` — sent as `X-Api-Key` or `Bearer` | endpoint is open |
-| `SIGNALWIRE_API_TOKEN` | `/sms`, `/call-status` — validates SignalWire's `X-Twilio-Signature` | webhooks unvalidated |
 | `DASHBOARD_KEY` | `/dashboard` (`?key=…`); falls back to `API_SECRET` | dashboard is open |
 
 Notes:
-- Signature validation reconstructs the signed URL from `PUBLIC_HOST` (preferred behind a tunnel) or the `Host` header — set `PUBLIC_HOST` so checks pass behind a proxy.
-- For local testing without a real provider, set `SKIP_SIGNATURE_VALIDATION=true` so you can `curl` the webhooks yourself.
 - Generate secrets with `openssl rand -hex 32`.
 
 ## Personas
@@ -158,7 +147,6 @@ Structure the prompt in clearly-labeled sections — LLMs follow section headers
 
 - **Outbound**: `POST /api/call` body `{ "phoneNumber": "+1...", "persona": "margaret" }` — routes to the VB agent for that persona.
 - **Inbound**: each VB agent has its own phone number — the persona is determined by which number the scammer called.
-- **SMS**: set the SignalWire SMS webhook to `…/sms?persona=margaret`.
 - **Default** for any call without an explicit persona: `DEFAULT_PERSONA=margaret` in `.env`.
 - **List** all available: `GET /api/call/personas`.
 
@@ -169,10 +157,7 @@ Structure the prompt in clearly-labeled sections — LLMs follow section headers
 | `POST` | `/api/call` | Place an outbound call: `{ phoneNumber, persona? }` — uses VB | `API_SECRET` |
 | `GET`  | `/api/call/personas` | List available personas | none |
 | `GET`  | `/api/call/sync` | Sync VB call logs (all personas; `?persona=` narrows, `?direction=` labels the batch, default `inbound`) | `API_SECRET` |
-| `POST` | `/sms` | SignalWire SMS webhook | signature |
 | `GET`  | `/dashboard` | Stats + transcript viewer (HTML) | `DASHBOARD_KEY` (`?key=`) |
-| `POST` | `/inbound` | Legacy — hangs up silently, logs a warning | signature |
-| `POST` | `/call-status` | Call status callbacks | signature |
 | `GET`  | `/` | Health check | none |
 
 ## Conversation logs
@@ -194,8 +179,6 @@ Every call is saved to `logs/conversations/` as JSON:
   ]
 }
 ```
-
-SMS threads are persisted separately to `logs/sms/<number>.json` so a conversation survives a server restart.
 
 ## Dashboard
 
@@ -244,7 +227,7 @@ Layout mirrors the runtime: `server.ts`, `routes/`, `services/`, `prompts/`, `sc
 npm test
 ```
 
-Compiles, then runs the `node:test` suite (`dist/test/`) — persona loading, the persisted SMS store, VocalBridge helpers, and the auth guards. No network or credentials required.
+Compiles, then runs the `node:test` suite (`dist/test/`) — persona loading, VocalBridge helpers, and the auth guards. No network or credentials required.
 
 ## Deployment
 
@@ -253,7 +236,7 @@ Needs a build step (set the build command to `npm install && npm run build`, sta
 - **Fly.io** — `fly deploy` (build via the Dockerfile/buildpack, run `npm start`)
 - **Render** — build `npm install && npm run build`, start `npm start`
 
-Inbound calls go directly to VB — no webhooks to configure for voice. Update the SignalWire SMS webhook to your deployed host. Because `dist/` is gitignored, the host must build from source — don't expect a committed `dist/`.
+Inbound calls go directly to VB — no webhooks to configure for voice. Because `dist/` is gitignored, the host must build from source — don't expect a committed `dist/`.
 
 ## Legal & ethical
 

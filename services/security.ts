@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import crypto from 'crypto';
-import twilio from 'twilio';
 import type { Request, Response, NextFunction } from 'express';
 
 /**
@@ -13,8 +12,6 @@ import type { Request, Response, NextFunction } from 'express';
  */
 
 const API_SECRET = process.env.API_SECRET;
-const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
-const SKIP_SIGNATURE_VALIDATION = process.env.SKIP_SIGNATURE_VALIDATION === 'true';
 
 const warnedOnce = new Set<string>();
 function warnOnce(key: string, message: string): void {
@@ -57,43 +54,6 @@ function requireApiKey(req: Request, res: Response, next: NextFunction): void {
 }
 
 /**
- * Reconstruct the public URL SignalWire used when it signed the request.
- * Behind a tunnel/proxy the local host header is wrong, so prefer PUBLIC_HOST.
- */
-function publicUrl(req: Request): string {
-  const base = process.env.PUBLIC_HOST
-    ? process.env.PUBLIC_HOST.replace(/\/$/, '')
-    : `https://${req.headers.host}`;
-  return base + req.originalUrl;
-}
-
-/**
- * Express middleware: verify the X-Twilio-Signature header SignalWire sends on
- * every webhook (SMS, status). This stops anyone from POSTing forged
- * webhooks to burn your OpenAI credits or trigger actions.
- *
- * Requires SIGNALWIRE_API_TOKEN (the signing key). Set SKIP_SIGNATURE_VALIDATION=true
- * to bypass for local testing without a real provider.
- */
-function validateSignalWireSignature(req: Request, res: Response, next: NextFunction): void {
-  if (SKIP_SIGNATURE_VALIDATION) return next();
-
-  if (!SIGNALWIRE_API_TOKEN) {
-    warnOnce('sw-token', '[security] SIGNALWIRE_API_TOKEN not set — webhook signatures are NOT validated.');
-    return next();
-  }
-
-  const signature = req.get('x-twilio-signature') || '';
-  const url = publicUrl(req);
-  const valid = twilio.validateRequest(SIGNALWIRE_API_TOKEN, signature, url, (req.body || {}) as Record<string, unknown>);
-
-  if (valid) return next();
-
-  console.warn(`[security] Rejected webhook with bad signature: ${req.method} ${req.originalUrl}`);
-  res.status(403).type('text/plain').send('invalid signature');
-}
-
-/**
  * Express middleware for the log dashboard. Browsers can't easily send a custom
  * header, so this also accepts the secret as a `?key=` query param. Uses
  * DASHBOARD_KEY if set, otherwise falls back to API_SECRET.
@@ -113,6 +73,5 @@ function requireDashboardKey(req: Request, res: Response, next: NextFunction): v
 export {
   requireApiKey,
   requireDashboardKey,
-  validateSignalWireSignature,
   safeEqual,
 };
