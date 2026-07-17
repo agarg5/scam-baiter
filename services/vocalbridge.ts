@@ -5,30 +5,6 @@ const VB_API_KEY = process.env.VOCAL_BRIDGE_API_KEY;
 const VB_API_URL = (process.env.VOCAL_BRIDGE_API_URL || 'https://vocalbridgeai.com').replace(/\/$/, '');
 const VB_TIMEOUT_MS = Number(process.env.VOCAL_BRIDGE_TIMEOUT_MS) || 15000;
 
-/**
- * fetch wrapper that aborts a request that stalls past VB_TIMEOUT_MS, so a
- * hung VocalBridge provider fails fast instead of hanging the caller
- * indefinitely.
- */
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit = {},
-  timeoutMs = VB_TIMEOUT_MS
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') {
-      throw new Error(`VB request to ${url} timed out after ${timeoutMs}ms`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 interface VBCallResult {
   call_id: string;
   destination: string;
@@ -47,25 +23,78 @@ interface VBLogEntry {
   transcript?: Array<{ role: string; text: string; timestamp?: number }>;
 }
 
-interface VBTokenResponse {
-  url: string;
-  token: string;
-  room_name: string;
-  participant_identity: string;
-  expires_in: number;
-  agent_mode?: string;
-  livekit_url?: string;
+/**
+ * Single VB HTTP entry point: auth headers, a deadline that covers the FULL
+ * request (headers AND body — a provider that returns 200 then stalls the body
+ * would otherwise hang the caller forever), and uniform error reporting.
+ */
+async function vbRequest<T>(
+  path: string,
+  agentId: string,
+  init: RequestInit = {},
+  label = path
+): Promise<T> {
+  if (!VB_API_KEY) {
+    throw new Error('VOCAL_BRIDGE_API_KEY is not set');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), VB_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${VB_API_URL}${path}`, {
+      ...init,
+      headers: {
+        'X-API-Key': VB_API_KEY,
+        'X-Agent-Id': agentId,
+        'Content-Type': 'application/json',
+        ...init.headers,
+      },
+      signal: controller.signal,
+    });
+    const bodyText = await res.text();
+    if (!res.ok) {
+      throw new Error(`VB ${label} failed (${res.status}): ${bodyText}`);
+    }
+    return JSON.parse(bodyText) as T;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      throw new Error(`VB ${label} timed out after ${VB_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Persona ids may contain characters that are invalid in env var names
+ * (e.g. "irs-agent"), so non-alphanumerics map to underscores.
+ */
+function envKeyFor(persona: Persona): string {
+  return `VOCALBRIDGE_AGENT_${persona.id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
 }
 
 /**
  * Resolves the VB agent ID for a given persona. Each persona maps to a
  * separate VB agent, stored as VOCALBRIDGE_AGENT_<PERSONA_ID> in the
  * environment, or as the persona's `vbAgentId` field.
+ *
+ * A VB agent has exactly one prompt, but our personas distinguish inbound
+ * (systemPrompt) from outbound (outboundPrompt, which adds an opener). To keep
+ * that behavior, an optional VOCALBRIDGE_AGENT_<PERSONA_ID>_OUTBOUND var can
+ * point outbound calls at a second agent configured with the outbound prompt;
+ * without it, both directions use the same agent.
  */
-function resolveAgentId(persona: Persona): string {
+function resolveAgentId(persona: Persona, direction?: Direction): string {
+  const envKey = envKeyFor(persona);
+
+  if (direction === 'outbound') {
+    const outbound = process.env[`${envKey}_OUTBOUND`];
+    if (outbound) return outbound;
+  }
+
   if (persona.vbAgentId) return persona.vbAgentId;
 
-  const envKey = `VOCALBRIDGE_AGENT_${persona.id.toUpperCase()}`;
   const fromEnv = process.env[envKey];
   if (fromEnv) return fromEnv;
 
@@ -78,17 +107,6 @@ function resolveAgentId(persona: Persona): string {
   );
 }
 
-function headers(agentId: string): Record<string, string> {
-  if (!VB_API_KEY) {
-    throw new Error('VOCAL_BRIDGE_API_KEY is not set');
-  }
-  return {
-    'X-API-Key': VB_API_KEY,
-    'X-Agent-Id': agentId,
-    'Content-Type': 'application/json',
-  };
-}
-
 /**
  * Place an outbound phone call through Vocal Bridge. The VB agent (identified
  * by the persona's agent mapping) dials the number, runs the conversation with
@@ -99,47 +117,15 @@ async function placeCall(
   persona: Persona,
   participantName?: string
 ): Promise<VBCallResult> {
-  const agentId = resolveAgentId(persona);
+  const agentId = resolveAgentId(persona, 'outbound');
 
   const body: Record<string, string> = { phone_number: phoneNumber };
   if (participantName) body.participant_name = participantName;
 
-  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/calls`, {
+  return vbRequest<VBCallResult>('/api/v1/calls', agentId, {
     method: 'POST',
-    headers: headers(agentId),
     body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`VB placeCall failed (${res.status}): ${detail}`);
-  }
-
-  return res.json() as Promise<VBCallResult>;
-}
-
-/**
- * Generate a short-lived connection token for a VB voice session. Used when
- * a client (e.g. a web dashboard) wants to connect to the agent via WebRTC.
- */
-async function generateToken(
-  persona: Persona,
-  participantName = 'User'
-): Promise<VBTokenResponse> {
-  const agentId = resolveAgentId(persona);
-
-  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/token`, {
-    method: 'POST',
-    headers: headers(agentId),
-    body: JSON.stringify({ participant_name: participantName }),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`VB generateToken failed (${res.status}): ${detail}`);
-  }
-
-  return res.json() as Promise<VBTokenResponse>;
+  }, 'placeCall');
 }
 
 /**
@@ -155,16 +141,7 @@ async function getCallLogs(
   if (opts.status) params.set('status', String(opts.status));
   const qs = params.toString() ? `?${params}` : '';
 
-  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/logs${qs}`, {
-    headers: headers(agentId),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`VB getCallLogs failed (${res.status}): ${detail}`);
-  }
-
-  const data = await res.json() as Record<string, unknown>;
+  const data = await vbRequest<Record<string, unknown>>(`/api/v1/logs${qs}`, agentId, {}, 'getCallLogs');
   return (data.logs || data.sessions || []) as VBLogEntry[];
 }
 
@@ -176,17 +153,22 @@ async function getCallTranscript(
   persona: Persona
 ): Promise<VBLogEntry> {
   const agentId = resolveAgentId(persona);
+  return vbRequest<VBLogEntry>(
+    `/api/v1/logs/${encodeURIComponent(sessionId)}`,
+    agentId,
+    {},
+    'getCallTranscript'
+  );
+}
 
-  const res = await fetchWithTimeout(`${VB_API_URL}/api/v1/logs/${encodeURIComponent(sessionId)}`, {
-    headers: headers(agentId),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`VB getCallTranscript failed (${res.status}): ${detail}`);
-  }
-
-  return res.json() as Promise<VBLogEntry>;
+/**
+ * VB transcript timestamps arrive as bare numbers with no documented unit.
+ * Values below 1e12 can only be epoch seconds (1e12 ms is 2001, and no VB call
+ * predates the service), so scale them; larger values are already ms.
+ */
+function turnTimestamp(ts?: number): string {
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return new Date().toISOString();
+  return new Date(ts < 1e12 ? ts * 1000 : ts).toISOString();
 }
 
 /**
@@ -201,9 +183,7 @@ function toConversationLog(
   const transcript: ConversationTurn[] = (entry.transcript || []).map((t) => ({
     speaker: t.role === 'user' ? 'scammer' : 'agent',
     text: t.text,
-    timestamp: t.timestamp
-      ? new Date(t.timestamp).toISOString()
-      : new Date().toISOString(),
+    timestamp: turnTimestamp(t.timestamp),
   }));
 
   return {
@@ -213,6 +193,7 @@ function toConversationLog(
     scammerNumber: entry.phone_number || 'unknown',
     ourNumber: undefined,
     duration_seconds: entry.duration_seconds || 0,
+    status: entry.status,
     transcript,
     persona: persona.id,
   };
@@ -220,10 +201,9 @@ function toConversationLog(
 
 export {
   placeCall,
-  generateToken,
   getCallLogs,
   getCallTranscript,
   resolveAgentId,
   toConversationLog,
 };
-export type { VBCallResult, VBLogEntry, VBTokenResponse };
+export type { VBCallResult, VBLogEntry };

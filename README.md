@@ -54,6 +54,7 @@ npm start               # runs dist/server.js
    - Paste the persona's `systemPrompt` as the agent's system prompt.
    - Pick a voice that matches the character.
    - (Optional) Enable outbound calling if you want `POST /api/call` to work: `vb config set --outbound-enabled true --accept-outbound-tos`.
+   - (Optional) For outbound calls to open with the persona's scripted opener, create a **second** agent per persona using the `outboundPrompt` and set `VOCALBRIDGE_AGENT_<ID>_OUTBOUND` to its UUID; otherwise outbound calls run on the inbound prompt (no opener).
 3. Copy each agent's UUID and set the env vars:
    ```
    VOCAL_BRIDGE_API_KEY=vb_...
@@ -188,10 +189,10 @@ Flags:
 |---|---|---|---|
 | `POST` | `/api/call` | Place an outbound call: `{ phoneNumber, persona? }` — uses VB | `API_SECRET` |
 | `GET`  | `/api/call/personas` | List available personas | none |
-| `GET`  | `/api/call/sync` | Sync VB call logs to local dashboard | `API_SECRET` |
+| `GET`  | `/api/call/sync` | Sync VB call logs (all personas; `?persona=` narrows, `?direction=` labels the batch, default `inbound`) | `API_SECRET` |
 | `POST` | `/sms` | SignalWire SMS webhook | signature |
 | `GET`  | `/dashboard` | Stats + transcript viewer (HTML) | `DASHBOARD_KEY` (`?key=`) |
-| `POST` | `/inbound` | Legacy — returns a redirect message | signature |
+| `POST` | `/inbound` | Legacy — hangs up silently, logs a warning | signature |
 | `POST` | `/call-status` | Call status callbacks | signature |
 | `GET`  | `/` | Health check | none |
 

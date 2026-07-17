@@ -9,12 +9,12 @@ const router = express.Router();
  *
  * Inbound voice calls are handled entirely by VocalBridge — each persona's VB
  * agent has its own phone number. If a SignalWire webhook is still pointed
- * here by accident, we return a brief LaML message telling the caller to
- * update their config.
+ * here by accident, hang up silently: the caller is likely a scammer dialing
+ * the old number, and announcing the tooling would blow the persona. The log
+ * line below is the operator's signal that a webhook still points here.
  */
 router.post('/', (req: Request, res: Response) => {
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say('This number is now handled by Vocal Bridge. Please update your webhook configuration.');
   twiml.hangup();
   console.log(`[Inbound] Received legacy webhook from ${maskPhone(req.body.From)} — inbound calls should go to VB directly`);
   res.type('text/xml');

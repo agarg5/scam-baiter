@@ -75,7 +75,7 @@ function createConversationLog({
  * same log (e.g. re-running the VocalBridge sync) overwrites the existing file
  * instead of creating a duplicate.
  */
-function writeConversationLog(log: ConversationLog): string {
+async function writeConversationLog(log: ConversationLog): Promise<string> {
   const rawId = String(log.id);
   // VB session IDs are UUIDs and pass through verbatim (readable, one file per
   // session). For anything with characters that aren't filename-safe, fall back
@@ -87,7 +87,8 @@ function writeConversationLog(log: ConversationLog): string {
     : crypto.createHash('sha256').update(rawId).digest('hex').slice(0, 32);
   const filename = `vb-${safeId}.json`;
   const filepath = path.join(LOGS_DIR, filename);
-  fs.writeFileSync(filepath, JSON.stringify(log, null, 2));
+  // async so a multi-session sync doesn't block the event loop per file
+  await fs.promises.writeFile(filepath, JSON.stringify(log, null, 2));
   console.log(`[Logger] Wrote conversation log: ${filename}`);
   return filepath;
 }

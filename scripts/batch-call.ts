@@ -18,6 +18,9 @@
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
+import { placeCall } from '../services/vocalbridge';
+import { getPersona } from '../prompts/personas';
+import { maskPhone } from '../services/redact';
 
 export interface CallEntry {
   phoneNumber: string;
@@ -37,20 +40,12 @@ function parseList(file: string, defaultPersona = 'tyler'): CallEntry[] {
     if (!line) continue;
     const [number, persona] = line.split(/\s+/);
     if (!/^\+?\d{7,15}$/.test(number)) {
-      console.warn(`[batch] Skipping invalid number: "${number}"`);
+      console.warn(`[batch] Skipping invalid number: "${maskPhone(number)}"`);
       continue;
     }
     entries.push({ phoneNumber: number.startsWith('+') ? number : `+${number}`, persona: persona || defaultPersona });
   }
   return entries;
-}
-
-async function placeCallViaVB({ phoneNumber, persona }: CallEntry): Promise<Record<string, unknown>> {
-  const vb = await import('../services/vocalbridge');
-  const { getPersona } = await import('../prompts/personas');
-  const chosen = getPersona(persona);
-  const result = await vb.placeCall(phoneNumber, chosen);
-  return result as unknown as Record<string, unknown>;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -79,10 +74,10 @@ async function main(): Promise<void> {
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    console.log(`\n[batch] (${i + 1}/${entries.length}) → ${entry.phoneNumber} as ${entry.persona}`);
+    console.log(`\n[batch] (${i + 1}/${entries.length}) → ${maskPhone(entry.phoneNumber)} as ${entry.persona}`);
     try {
-      const r = await placeCallViaVB(entry);
-      console.log(`[batch]   OK`, JSON.stringify(r));
+      const r = await placeCall(entry.phoneNumber, getPersona(entry.persona));
+      console.log(`[batch]   OK call_id=${r.call_id} status=${r.status}`);
     } catch (err) {
       console.error(`[batch]   FAIL: ${(err as Error).message}`);
     }

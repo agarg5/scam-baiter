@@ -1,6 +1,5 @@
 import 'dotenv/config';
-import express, { Request, Response, NextFunction } from 'express';
-import http from 'http';
+import express, { Request, Response } from 'express';
 import { validateSignalWireSignature } from './services/security';
 import inboundRouter from './routes/inbound';
 import outboundRouter from './routes/outbound';
@@ -31,9 +30,8 @@ app.post('/call-status', validateSignalWireSignature, (req: Request, res: Respon
 // ── HTTP Server ───────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 8000;
-const server = http.createServer(app);
 
-server.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`\n🎭 Scam Baiter running on port ${PORT}`);
   console.log(`   Outbound API:     POST /api/call`);
   console.log(`   Log sync:         GET  /api/call/sync`);

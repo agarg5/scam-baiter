@@ -37,6 +37,8 @@ export interface ConversationLog {
   scammerNumber: string;
   ourNumber?: string;
   duration_seconds: number;
+  /** Provider call status (e.g. 'completed', 'failed'), when known. */
+  status?: string;
   transcript: ConversationTurn[];
   persona: string;
 }
