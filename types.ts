@@ -22,6 +22,12 @@ export interface Persona {
 /** The dashboard-facing subset of a persona (no prompt bodies). */
 export type PersonaSummary = Pick<Persona, 'id' | 'name' | 'description'>;
 
+/** A single turn in an OpenAI chat exchange (used by the offline simulator). */
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export type Speaker = 'scammer' | 'agent';
 
 export interface ConversationTurn {

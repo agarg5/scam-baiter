@@ -19,7 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 import { getPersona } from '../prompts/personas';
-import type { ChatMessage } from '../services/openai';
+import type { ChatMessage } from '../types';
 
 const args = process.argv.slice(2);
 const flags = Object.fromEntries(
