@@ -103,17 +103,20 @@ router.get('/sync', requireApiKey, async (req: Request, res: Response) => {
 
   try {
     const perPersona: Record<string, { synced: number; total: number }> = {};
-    await Promise.all(
-      personas.map(async (persona) => {
-        try {
-          perPersona[persona.id] = await syncPersona(persona, limit, direction);
-        } catch (err) {
-          // One persona without a VB agent mapping shouldn't sink the others.
-          console.warn(`[Sync] Persona ${persona.id} failed:`, (err as Error).message);
-          perPersona[persona.id] = { synced: 0, total: 0 };
-        }
-      })
-    );
+    // Personas sync one at a time: two personas can resolve to the same VB
+    // agent (shared VOCALBRIDGE_DEFAULT_AGENT_ID), and running them
+    // concurrently would race writeConversationLog's read-modify-write on the
+    // same vb-<session_id>.json. Per-session fetches inside syncPersona are
+    // already parallel, which is where the time goes.
+    for (const persona of personas) {
+      try {
+        perPersona[persona.id] = await syncPersona(persona, limit, direction);
+      } catch (err) {
+        // One persona without a VB agent mapping shouldn't sink the others.
+        console.warn(`[Sync] Persona ${persona.id} failed:`, (err as Error).message);
+        perPersona[persona.id] = { synced: 0, total: 0 };
+      }
+    }
 
     const synced = Object.values(perPersona).reduce((n, r) => n + r.synced, 0);
     const total = Object.values(perPersona).reduce((n, r) => n + r.total, 0);
